@@ -1,21 +1,25 @@
 ---
-description: Planned branch tenancy, auth, and orders — apply when designing those features
+description: Planned orders workflow — apply when designing order models, APIs, or offline sync
 alwaysApply: false
 ---
 
-# Tenancy (planned — not built)
+# Orders (planned — not built)
 
-Use when implementing auth, branches, memberships, or orders. Read the full design first.
+Auth and tenancy foundation exists (`accounts`, `branches`). Use when implementing orders.
 
 @docs/warehouse-tenancy-setup.md
 
-## Summary
+## Already in place
 
-- **Branch** = tenant; shared-table multi-tenancy via `branch_id` FK
-- **Roles** per branch via `BranchMembership`: Admin, Manager, User
-- **Orders** belong to one branch; no cross-branch ordering
-- `is_superuser` / `is_staff` = Django site admin only, not branch Admin role
-- Custom `User` with email login (no username) — set `AUTH_USER_MODEL` before first migration of dependent apps
-- Every tenant queryset must be branch-scoped (manager or explicit filter)
+- `accounts.User` — email login
+- `Branch`, `BranchMembership` — roles per branch
+- `branches/permissions.py` — `can_create_order`, `can_edit_or_delete_order`, etc.
+- `request.active_branch` — session-based active branch
 
-Do not implement tenancy features unless the user explicitly requests that phase.
+## Order phase rules
+
+- Every `Order` has required `branch` FK and `created_by` FK
+- Always query orders via branch-scoped manager (e.g. `.for_user_branches(user)`)
+- Role checks at view entry using `branches/permissions.py`
+- Client-side order IDs for idempotent sync (offline retries)
+- Product catalogue stays global (no `branch_id` on `Product`)

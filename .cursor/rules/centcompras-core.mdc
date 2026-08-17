@@ -11,20 +11,22 @@ Central warehouse + satellite branches. Offline-capable product catalogue MVP (D
 
 ## What exists today
 
-- `products` app only: model, `services.py`, API, CLI, offline web UI
-- Do not assume auth, branches, orders, or cart exist
+- `accounts` — custom User, email login
+- `branches` — Branch, BranchMembership, active branch middleware
+- `products` — catalogue, API, CLI, offline web UI
+- `orders` — not built yet
 
 ## Non-negotiables
 
 - PostgreSQL = source of truth; IndexedDB = read-only catalogue cache
 - Products created via CLI only (`add_product`), not from phone/web
 - Business logic in `services.py`; views/commands stay thin
+- Branch permissions via `branches/permissions.py`
 - Plain Django + plain JavaScript — no React/Vue
 - Incremental phases — no large application dumps
 
 ## References
 
-- @README.md — project overview and not-built-yet list
+- @README.md — project overview
 - @AGENTS.md — agent instructions
-- @docs/warehouse-tenancy-setup.md — planned tenancy (not implemented)
-- @products/products_docs/aux_instructions.md — pacing and interaction style
+- @docs/warehouse-tenancy-setup.md — order design (next phase)

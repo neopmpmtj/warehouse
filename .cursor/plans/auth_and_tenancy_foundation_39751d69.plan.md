@@ -4,25 +4,25 @@ overview: Set up custom email-based users, session login, branch tenancy (Branch
 todos:
   - id: settings-example
     content: Add config/settings.example.py with AUTH_USER_MODEL, apps, middleware, DB template, and commented Google OAuth placeholder for production
-    status: pending
+    status: completed
   - id: accounts-app
     content: "Create accounts app: User model, UserManager, admin, login/logout URLs + template"
-    status: pending
+    status: completed
   - id: branches-app
     content: "Create branches app: Branch, BranchMembership, permissions.py, admin"
-    status: pending
+    status: completed
   - id: active-branch
     content: Add ActiveBranchMiddleware, branch picker view/template, session helpers
-    status: pending
+    status: completed
   - id: wire-urls
     content: Update config/urls.py; protect products views with login_required
-    status: pending
+    status: completed
   - id: migrate-seed
     content: Run makemigrations + migrate on fresh DB; document createsuperuser and admin seed steps
-    status: pending
+    status: completed
   - id: update-docs
     content: Update README.md, AGENTS.md, and tenancy-future.mdc to reflect completed foundation
-    status: pending
+    status: completed
 isProject: false
 ---
 
