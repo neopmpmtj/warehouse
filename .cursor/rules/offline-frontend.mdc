@@ -1,0 +1,28 @@
+---
+description: Offline catalogue frontend — Service Worker, IndexedDB, plain JS
+globs: products/**/*.{js,html}
+alwaysApply: false
+---
+
+# Offline frontend
+
+## Responsibilities (do not merge)
+
+| File | Role |
+|------|------|
+| `db.js` | IndexedDB open, save, read catalogue |
+| `product_list.js` | Fetch API, fallback to cache, display table |
+| `register_sw.js` | Service Worker registration |
+| `service_worker.js` (template) | Cache app shell only — not API responses |
+
+## Rules
+
+- Service Worker served from `/service-worker.js` (root scope)
+- Do not cache `/api/` in the Service Worker — API failure triggers IndexedDB fallback
+- Bump `CACHE_NAME` version when app shell files change
+- Include all shell scripts in `APP_SHELL` (including `register_sw.js`)
+- IndexedDB stores downloaded catalogue only — not user-created products
+
+## API contract
+
+`GET /api/products/` returns `{ "products": [{ id, description, stock, price }] }` with stock/price as strings.

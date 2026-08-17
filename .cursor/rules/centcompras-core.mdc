@@ -1,0 +1,30 @@
+---
+description: CentCompras core architecture, scope, and development pace
+alwaysApply: true
+---
+
+# CentCompras core
+
+## Project
+
+Central warehouse + satellite branches. Offline-capable product catalogue MVP (Django 6.1, PostgreSQL, plain HTML/JS).
+
+## What exists today
+
+- `products` app only: model, `services.py`, API, CLI, offline web UI
+- Do not assume auth, branches, orders, or cart exist
+
+## Non-negotiables
+
+- PostgreSQL = source of truth; IndexedDB = read-only catalogue cache
+- Products created via CLI only (`add_product`), not from phone/web
+- Business logic in `services.py`; views/commands stay thin
+- Plain Django + plain JavaScript — no React/Vue
+- Incremental phases — no large application dumps
+
+## References
+
+- @README.md — project overview and not-built-yet list
+- @AGENTS.md — agent instructions
+- @docs/warehouse-tenancy-setup.md — planned tenancy (not implemented)
+- @products/products_docs/aux_instructions.md — pacing and interaction style
