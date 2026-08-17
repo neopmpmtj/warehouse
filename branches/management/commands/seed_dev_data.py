@@ -5,8 +5,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from branches.models import Branch, BranchMembership
-from products.models import Product
-from products.services import create_product
+from products.models import Product, Supplier
+from products.services import create_product, create_supplier, link_product_supplier
 
 
 DEFAULT_PASSWORD = "devpass123"
@@ -44,6 +44,31 @@ PRODUCTS = (
         "price": "0.85",
         "internal_code": "SAND-1KG",
     },
+)
+
+SUPPLIERS = (
+    {
+        "name": "BuildSupply Ltd",
+        "phone": "+351 210 000 001",
+        "contact_name": "Ana Ribeiro",
+    },
+    {
+        "name": "Porto Materials Co",
+        "email": "sales@portomaterials.dev",
+        "contact_name": "Carlos Mendes",
+    },
+    {
+        "name": "National Cement Works",
+        "phone": "+351 220 000 002",
+        "contact_name": "Warehouse desk",
+    },
+)
+
+PRODUCT_SUPPLIER_LINKS = (
+    ("CEM-50", "BuildSupply Ltd"),
+    ("CEM-50", "Porto Materials Co"),
+    ("CEM-50", "National Cement Works"),
+    ("PIPE-20", "BuildSupply Ltd"),
 )
 
 
@@ -127,11 +152,13 @@ class Command(BaseCommand):
 
         if not options["skip_products"]:
             product_user = warehouse_user
+            products_by_code = {}
             for product_data in PRODUCTS:
                 existing = Product.objects.filter(
                     internal_code=product_data["internal_code"]
                 ).first()
                 if existing:
+                    products_by_code[product_data["internal_code"]] = existing
                     self.stdout.write(
                         f"Exists product: {existing.internal_code} — {existing.description}"
                     )
@@ -145,10 +172,46 @@ class Command(BaseCommand):
                     internal_code=product_data["internal_code"],
                     reason="seed_dev_data",
                 )
+                products_by_code[product_data["internal_code"]] = product
                 self.stdout.write(
                     self.style.SUCCESS(
                         f"Created product: {product.internal_code} — {product.description}"
                     )
+                )
+
+            suppliers_by_name = {}
+            for supplier_data in SUPPLIERS:
+                existing = Supplier.objects.filter(name=supplier_data["name"]).first()
+                if existing:
+                    suppliers_by_name[supplier_data["name"]] = existing
+                    self.stdout.write(f"Exists supplier: {existing.name}")
+                    continue
+
+                supplier = create_supplier(
+                    name=supplier_data["name"],
+                    contact_name=supplier_data.get("contact_name", ""),
+                    email=supplier_data.get("email", ""),
+                    phone=supplier_data.get("phone", ""),
+                )
+                suppliers_by_name[supplier_data["name"]] = supplier
+                self.stdout.write(
+                    self.style.SUCCESS(f"Created supplier: {supplier.name}")
+                )
+
+            for product_code, supplier_name in PRODUCT_SUPPLIER_LINKS:
+                product = products_by_code.get(product_code)
+                if product is None:
+                    product = Product.objects.filter(internal_code=product_code).first()
+                supplier = suppliers_by_name.get(supplier_name)
+                if supplier is None:
+                    supplier = Supplier.objects.filter(name=supplier_name).first()
+
+                if product is None or supplier is None:
+                    continue
+
+                link_product_supplier(product, supplier)
+                self.stdout.write(
+                    f"Linked product {product.internal_code} -> supplier {supplier.name}"
                 )
 
         self.stdout.write("")

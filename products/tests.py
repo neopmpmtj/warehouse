@@ -10,11 +10,18 @@ from products.permissions import can_manage_catalog
 from products.services import (
     DuplicateInternalCodeError,
     create_product,
+    create_supplier,
     deactivate_product,
     get_catalog_updated_at,
     get_products,
+    get_products_for_supplier,
+    get_suppliers,
+    get_suppliers_for_product,
+    link_product_supplier,
     reactivate_product,
+    unlink_product_supplier,
     update_product,
+    update_supplier,
     validate_internal_code_available,
 )
 
@@ -337,3 +344,137 @@ class ProductApiTests(TestCase):
 
         self.assertEqual(payload["products"], [])
         self.assertIsNone(payload["catalog_updated_at"])
+
+
+class SupplierServiceTests(TestCase):
+    def setUp(self):
+        self.staff_user = get_user_model().objects.create_user(
+            email="staff@example.com",
+            password="test-pass-123",
+            is_staff=True,
+        )
+
+    def test_product_can_have_multiple_suppliers(self):
+        product = create_product(
+            self.staff_user,
+            description="Cement 50kg",
+            stock="100",
+            price="12.95",
+            internal_code="CEM-50",
+        )
+        first = create_supplier(name="BuildSupply Ltd", phone="+351 210 000 001")
+        second = create_supplier(name="Porto Materials Co", email="sales@example.com")
+        third = create_supplier(name="National Cement Works")
+
+        link_product_supplier(product, first)
+        link_product_supplier(product, second)
+        link_product_supplier(product, third)
+
+        supplier_names = list(
+            get_suppliers_for_product(product).values_list("name", flat=True)
+        )
+
+        self.assertEqual(
+            supplier_names,
+            ["BuildSupply Ltd", "National Cement Works", "Porto Materials Co"],
+        )
+
+    def test_link_product_supplier_is_idempotent(self):
+        product = create_product(
+            self.staff_user,
+            description="Pipe",
+            stock="1",
+            price="1.00",
+        )
+        supplier = create_supplier(name="BuildSupply Ltd")
+
+        link_product_supplier(product, supplier)
+        link_product_supplier(product, supplier)
+
+        self.assertEqual(product.product_suppliers.count(), 1)
+
+    def test_unlink_product_supplier_removes_link(self):
+        product = create_product(
+            self.staff_user,
+            description="Pipe",
+            stock="1",
+            price="1.00",
+        )
+        supplier = create_supplier(name="BuildSupply Ltd")
+        link_product_supplier(product, supplier)
+
+        unlink_product_supplier(product, supplier)
+
+        self.assertEqual(get_suppliers_for_product(product).count(), 0)
+
+    def test_get_products_for_supplier_returns_linked_products(self):
+        product = create_product(
+            self.staff_user,
+            description="Cement",
+            stock="1",
+            price="1.00",
+            internal_code="CEM-50",
+        )
+        supplier = create_supplier(name="BuildSupply Ltd")
+        link_product_supplier(product, supplier)
+
+        product_ids = list(get_products_for_supplier(supplier).values_list("id", flat=True))
+
+        self.assertEqual(product_ids, [product.id])
+
+    def test_update_supplier_changes_contact_fields(self):
+        supplier = create_supplier(name="BuildSupply Ltd")
+
+        updated = update_supplier(
+            supplier,
+            contact_name="Ana Ribeiro",
+            phone="+351 210 000 001",
+        )
+
+        self.assertEqual(updated.contact_name, "Ana Ribeiro")
+        self.assertEqual(updated.phone, "+351 210 000 001")
+
+    def test_get_suppliers_active_only_excludes_inactive(self):
+        active = create_supplier(name="Active Supplier")
+        inactive = create_supplier(name="Inactive Supplier")
+        update_supplier(inactive, is_active=False)
+
+        names = list(get_suppliers().values_list("name", flat=True))
+
+        self.assertEqual(names, ["Active Supplier"])
+
+
+class SupplierAdminAccessTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.staff_user = user_model.objects.create_user(
+            email="staff@example.com",
+            password="test-pass-123",
+            is_staff=True,
+        )
+        self.branch_user = user_model.objects.create_user(
+            email="branch@example.com",
+            password="test-pass-123",
+        )
+        branch = Branch.objects.create(name="Test Branch")
+        BranchMembership.objects.create(
+            user=self.branch_user,
+            branch=branch,
+            role=BranchMembership.Role.ADMIN,
+        )
+        self.client = Client()
+        self.supplier_changelist_url = reverse("admin:products_supplier_changelist")
+
+    def test_staff_user_can_open_supplier_admin(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(self.supplier_changelist_url)
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_branch_admin_cannot_open_supplier_admin(self):
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(self.supplier_changelist_url)
+
+        self.assertIn(response.status_code, (302, 403))

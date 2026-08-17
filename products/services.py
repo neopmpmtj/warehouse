@@ -6,7 +6,7 @@ from django.db.models import Max
 
 from logging_utils import get_logger
 
-from .models import Product, ProductChangeLog
+from .models import Product, ProductChangeLog, ProductSupplier, Supplier
 
 logger = get_logger("centcompras.products")
 
@@ -231,3 +231,121 @@ def get_catalog_updated_at(active_only=True):
 
 def get_product_history(product):
     return product.change_logs.select_related("user").order_by("-created_at")
+
+
+SUPPLIER_UPDATABLE_FIELDS = (
+    "name",
+    "contact_name",
+    "email",
+    "phone",
+    "notes",
+    "is_active",
+)
+
+
+def create_supplier(name, contact_name="", email="", phone="", notes=""):
+    supplier = Supplier(
+        name=name.strip(),
+        contact_name=contact_name.strip(),
+        email=email.strip(),
+        phone=phone.strip(),
+        notes=notes.strip(),
+        is_active=True,
+    )
+    supplier.save()
+
+    logger.info(
+        "Created supplier id=%s name=%r",
+        supplier.id,
+        supplier.name,
+    )
+
+    return supplier
+
+
+@transaction.atomic
+def update_supplier(supplier, **fields):
+    if not fields:
+        return supplier
+
+    unknown = set(fields) - set(SUPPLIER_UPDATABLE_FIELDS)
+    if unknown:
+        raise ValueError(f"Cannot update fields: {', '.join(sorted(unknown))}")
+
+    supplier = Supplier.objects.select_for_update().get(pk=supplier.pk)
+
+    update_fields = []
+    for field_name, new_value in fields.items():
+        if field_name in ("name", "contact_name", "email", "phone", "notes"):
+            new_value = new_value.strip()
+        old_value = getattr(supplier, field_name)
+        if old_value != new_value:
+            setattr(supplier, field_name, new_value)
+            update_fields.append(field_name)
+
+    if not update_fields:
+        return supplier
+
+    update_fields.append("updated_at")
+    supplier.save(update_fields=update_fields)
+
+    logger.info(
+        "Updated supplier id=%s fields=%s",
+        supplier.id,
+        update_fields,
+    )
+
+    return supplier
+
+
+def get_suppliers(active_only=True):
+    queryset = Supplier.objects.all()
+    if active_only:
+        queryset = queryset.filter(is_active=True)
+    return queryset.order_by("name")
+
+
+def get_suppliers_for_product(product, active_only=True):
+    queryset = Supplier.objects.filter(product_suppliers__product=product)
+    if active_only:
+        queryset = queryset.filter(is_active=True)
+    return queryset.order_by("name")
+
+
+def get_products_for_supplier(supplier, active_only=True):
+    queryset = Product.objects.filter(product_suppliers__supplier=supplier)
+    if active_only:
+        queryset = queryset.active()
+    return queryset.order_by("id")
+
+
+@transaction.atomic
+def link_product_supplier(product, supplier):
+    link, created = ProductSupplier.objects.get_or_create(
+        product=product,
+        supplier=supplier,
+    )
+
+    if created:
+        logger.info(
+            "Linked product id=%s to supplier id=%s",
+            product.id,
+            supplier.id,
+        )
+
+    return link
+
+
+@transaction.atomic
+def unlink_product_supplier(product, supplier):
+    deleted, _ = ProductSupplier.objects.filter(
+        product=product,
+        supplier=supplier,
+    ).delete()
+
+    if deleted:
+        logger.info(
+            "Unlinked product id=%s from supplier id=%s",
+            product.id,
+            supplier.id,
+        )

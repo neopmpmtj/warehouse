@@ -2,14 +2,18 @@ from django import forms
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied, ValidationError
 
-from .models import Product, ProductChangeLog
+from .models import Product, ProductChangeLog, ProductSupplier, Supplier
 from .permissions import can_manage_catalog
 from .services import (
     DuplicateInternalCodeError,
     create_product,
+    create_supplier,
     deactivate_product,
+    link_product_supplier,
     reactivate_product,
+    unlink_product_supplier,
     update_product,
+    update_supplier,
     validate_internal_code_available,
 )
 
@@ -55,6 +59,27 @@ class ProductChangeLogInline(admin.TabularInline):
         return False
 
 
+class ProductSupplierInline(admin.TabularInline):
+    model = ProductSupplier
+    extra = 1
+    autocomplete_fields = ("supplier",)
+
+    def has_module_permission(self, request):
+        return can_manage_catalog(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_add_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     form = ProductAdminForm
@@ -64,13 +89,14 @@ class ProductAdmin(admin.ModelAdmin):
         "description",
         "stock",
         "price",
+        "supplier_count",
         "is_active",
         "updated_at",
     )
     list_filter = ("is_active",)
     search_fields = ("internal_code", "description")
     readonly_fields = ("is_active", "created_at", "updated_at")
-    inlines = (ProductChangeLogInline,)
+    inlines = (ProductSupplierInline, ProductChangeLogInline)
     actions = ("deactivate_products", "reactivate_products")
     fieldsets = (
         (
@@ -95,6 +121,10 @@ class ProductAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).include_inactive()
+
+    @admin.display(description="Suppliers")
+    def supplier_count(self, obj):
+        return obj.product_suppliers.count()
 
     def has_module_permission(self, request):
         return can_manage_catalog(request.user)
@@ -144,6 +174,34 @@ class ProductAdmin(admin.ModelAdmin):
 
         obj.refresh_from_db()
 
+    def save_formset(self, request, form, formset, change):
+        if formset.model is ProductSupplier:
+            if not can_manage_catalog(request.user):
+                raise PermissionDenied
+
+            product = form.instance
+            if not product.pk:
+                return
+
+            for inline_form in formset.forms:
+                if not inline_form.cleaned_data:
+                    continue
+                if inline_form.cleaned_data.get("DELETE"):
+                    if inline_form.instance.pk:
+                        unlink_product_supplier(
+                            product,
+                            inline_form.instance.supplier,
+                        )
+                elif inline_form.instance.pk is None:
+                    supplier = inline_form.cleaned_data.get("supplier")
+                    if supplier:
+                        link_product_supplier(product, supplier)
+
+            formset.save(commit=False)
+            return
+
+        super().save_formset(request, form, formset, change)
+
     @admin.action(description="Deactivate selected products")
     def deactivate_products(self, request, queryset):
         for product in queryset:
@@ -153,6 +211,107 @@ class ProductAdmin(admin.ModelAdmin):
     def reactivate_products(self, request, queryset):
         for product in queryset:
             reactivate_product(request.user, product)
+
+
+class SupplierProductInline(admin.TabularInline):
+    model = ProductSupplier
+    extra = 0
+    autocomplete_fields = ("product",)
+    readonly_fields = ("product",)
+
+    def has_module_permission(self, request):
+        return can_manage_catalog(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(Supplier)
+class SupplierAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "contact_name",
+        "email",
+        "phone",
+        "product_count",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("is_active",)
+    search_fields = ("name", "contact_name", "email", "phone", "notes")
+    readonly_fields = ("created_at", "updated_at")
+    inlines = (SupplierProductInline,)
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "name",
+                    "contact_name",
+                    "email",
+                    "phone",
+                    "notes",
+                    "is_active",
+                    "created_at",
+                    "updated_at",
+                )
+            },
+        ),
+    )
+
+    @admin.display(description="Products")
+    def product_count(self, obj):
+        return obj.product_suppliers.count()
+
+    def has_module_permission(self, request):
+        return can_manage_catalog(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_add_permission(self, request):
+        return can_manage_catalog(request.user)
+
+    def has_change_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if not can_manage_catalog(request.user):
+            raise PermissionDenied
+
+        if change:
+            update_supplier(
+                obj,
+                name=form.cleaned_data["name"],
+                contact_name=form.cleaned_data["contact_name"],
+                email=form.cleaned_data["email"],
+                phone=form.cleaned_data["phone"],
+                notes=form.cleaned_data["notes"],
+                is_active=form.cleaned_data["is_active"],
+            )
+        else:
+            created = create_supplier(
+                name=form.cleaned_data["name"],
+                contact_name=form.cleaned_data["contact_name"],
+                email=form.cleaned_data["email"],
+                phone=form.cleaned_data["phone"],
+                notes=form.cleaned_data["notes"],
+            )
+            obj.pk = created.pk
+
+        obj.refresh_from_db()
 
 
 @admin.register(ProductChangeLog)
