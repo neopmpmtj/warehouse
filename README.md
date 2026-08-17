@@ -18,6 +18,7 @@ This repository is an early-stage MVP built incrementally: one concept per phase
 | **Auth & tenancy foundation** | Done | `accounts` (email login), `branches` (Branch, BranchMembership, roles, middleware, picker) |
 | **Login-protected catalogue** | Done | `/` and `/api/products/` require session; API returns 401 when logged out |
 | **Centralized logging** | Done | `logging_utils` → rotating files in `logs/` |
+| **Catalog management & audit** | Done | Staff admin, soft delete, `ProductChangeLog`, service-layer mutations |
 | **Project setup docs** | Done | Root README, `requirements.txt`, `config/settings.example.py`, `AGENTS.md`, `.cursor/` rules |
 | **Manual testing** | Done | DB setup, migrate, admin seed, login, branch picker, catalogue, logging verified by developer |
 
@@ -48,16 +49,15 @@ AGENTS.md          agent instructions for Cursor
 | **Integration tests** | Later | Auth flow, branch middleware, catalogue API, offline behaviour |
 | **Google OAuth** | Production | `django-allauth` or similar; email `User` model is already OAuth-ready |
 | **Public signup / password reset** | Later | Admin creates users for now |
-| **Product admin UI** | Later | Products still CLI-only (`add_product`) |
 | **Branch switcher in catalogue** | Later | Multi-branch users pick at login; no in-app switch yet |
 | **Production deployment** | Later | HTTPS, env-based secrets, PWA manifest |
 
 ### Recommended next session
 
 1. Skim this section and [Setup](#setup) if environment is new.
-2. Read [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 for the Order model design.
-3. Implement **orders** incrementally (model → API → permissions → offline queue).
-4. Add **automated tests** when a feature stabilizes — not required before orders, but plan for them.
+2. **Greenfield DB reset** after catalog schema change: drop/recreate `centcompras_db`, then `python manage.py migrate`.
+3. Read [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 for the Order model design.
+4. Implement **orders** incrementally (model → API → permissions → offline queue).
 
 ### Development philosophy
 
@@ -72,7 +72,7 @@ One concept per phase. Reusable `services.py` layer. Plain Django + plain JavaSc
 - Users may travel through areas with little or no mobile data, so the client must work **offline** for catalogue browsing (and, in a future phase, for queuing orders).
 - PostgreSQL on the server is the **source of truth**. The browser's IndexedDB is a **read-only local cache** of the last successfully downloaded catalogue.
 
-Products are added only via a Django management command — not from the phone or a public web form.
+Warehouse staff manage the catalogue in Django admin (`is_staff` users). Branch phone users have **read-only** access via the API and offline cache. The CLI (`add_product`) remains for dev/bootstrap only.
 
 ---
 
@@ -106,15 +106,18 @@ Production will use Google OAuth (not implemented in dev — email/password logi
 
 ### Product catalogue (server)
 
-- `Product` model: `description`, `stock` (decimal, supports fractions), `price` (USD, `DecimalField`).
-- Reusable service layer in `products/services.py` (`create_product`, `get_products`).
-- CLI command to insert products:
+- `Product` model: optional `internal_code`, `description`, `stock` (decimal), `price` (USD), `is_active` (soft delete), timestamps.
+- `ProductChangeLog` — immutable audit trail (user, action, field diffs).
+- Service layer in [`products/services.py`](products/services.py): `create_product`, `update_product`, `deactivate_product`, `reactivate_product`, `get_products` (active only by default).
+- Warehouse staff manage products in `/admin/` (`products/permissions.py` — `is_staff` only).
+- Dev/bootstrap CLI:
 
   ```bash
   python manage.py add_product "Cement 50kg" 100 12.95
+  python manage.py add_product "Steel Pipe" 50 8.75 --internal-code PIPE-20
   ```
 
-- JSON API (authenticated):
+- JSON API (authenticated, **active products only**):
 
   ```text
   GET /api/products/
@@ -354,8 +357,7 @@ The following do **not** exist today. The [Project status](#project-status-hando
 - Order synchronization when connectivity returns
 - Idempotent order submission (client-side order IDs on retry)
 - Stock reservation or conflict handling
-- Product editing or creation from phone or public web UI
-- Django admin registration for `Product`
+- Product creation or editing from branch phone UI or public web forms
 - In-app branch switcher (only login-time picker for multi-branch users)
 
 ### Auth & production

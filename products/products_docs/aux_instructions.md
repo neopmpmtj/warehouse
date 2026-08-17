@@ -122,18 +122,21 @@ Offline order creation is a future phase.
 
 # 4. Critical product-management restriction
 
-The phone/browser must **NOT** have a feature that creates products.
+Branch phone/browser users must **NOT** create or edit warehouse products.
 
-At this stage products are inserted only via CLI:
+Warehouse staff (`is_staff` Django users) manage the catalogue in `/admin/`:
+
+- add products
+- edit fields (`internal_code`, `description`, `stock`, `price`)
+- soft-delete (deactivate) and reactivate via admin actions
+
+All server-side mutations go through `products/services.py` and are recorded in `ProductChangeLog`.
+
+The CLI remains for dev/bootstrap only:
 
 ```bash
 python manage.py add_product "Description" stock price
-```
-
-Example:
-
-```bash
-python manage.py add_product "Steel Pipe 20mm" 50 8.75
+python manage.py add_product "Steel Pipe 20mm" 50 8.75 --internal-code PIPE-20
 ```
 
 If you see a function named:
@@ -158,10 +161,16 @@ Current model fields:
 
 ```text
 id
+internal_code   (optional, unique when set)
 description
 stock
 price
+is_active       (soft delete when false)
+created_at
+updated_at
 ```
+
+Audit history is stored in `ProductChangeLog` (separate table).
 
 Requirements:
 
@@ -199,27 +208,18 @@ Current:
 products/services.py
 ```
 
-contains:
+contains mutation and read helpers, including:
 
 ```python
-from decimal import Decimal
-
-from .models import Product
-
-
-def create_product(description, stock, price):
-    product = Product.objects.create(
-        description=description,
-        stock=Decimal(str(stock)),
-        price=Decimal(str(price)),
-    )
-
-    return product
-
-
-def get_products():
-    return Product.objects.all().order_by("id")
+create_product(user, description, stock, price, internal_code="")
+update_product(user, product, **fields)
+deactivate_product(user, product)
+reactivate_product(user, product)
+get_products(active_only=True)
+get_product_history(product)
 ```
+
+All mutations write to `ProductChangeLog` inside a transaction.
 
 The intended design is:
 
@@ -959,7 +959,10 @@ Completed:
 [done] Service Worker app-shell caching
 [done] offline catalogue display
 [done] automatic reconnect refresh
-[done] 30-second retry backup
+[done] catalog management via admin (staff only)
+[done] soft delete (is_active)
+[done] ProductChangeLog audit trail
+[done] service-layer create/update/deactivate/reactivate
 ```
 
 Not completed:

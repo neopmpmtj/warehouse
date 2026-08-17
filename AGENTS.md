@@ -26,10 +26,12 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 
 ### Catalogue
 
-- **Product fields:** `description`, `stock` (decimal), `price` (USD)
+- **Product fields:** optional `internal_code`, `description`, `stock` (decimal), `price` (USD), `is_active`, timestamps
+- **Audit:** `ProductChangeLog` — who changed what (create / update / deactivate / reactivate)
 - **Global catalogue** — no `branch_id` on `Product` (warehouse stock for all branches)
-- **Product creation:** CLI only — `python manage.py add_product "..." stock price`
-- **API:** `GET /api/products/` (authenticated)
+- **Management:** warehouse staff via Django admin (`is_staff`); all mutations through `products/services.py`
+- **Branch access:** read-only — `GET /api/products/` returns active products only
+- **CLI:** `add_product` for dev/bootstrap (audit user is null); optional `--internal-code`
 - **Offline:** Service Worker + IndexedDB (read-only catalogue cache)
 
 ### Logging
@@ -46,7 +48,7 @@ PostgreSQL is the source of truth. IndexedDB is a read-only local cache.
 - Unit tests and integration tests (stub files only — defer until features stabilize)
 - Google OAuth, public signup, password reset
 - Offline order queue and sync
-- Product admin, in-app branch switcher
+- In-app branch switcher
 
 Full list: [`README.md` → What is explicitly not built yet](README.md#what-is-explicitly-not-built-yet)
 
@@ -57,7 +59,7 @@ CLI / API / views  →  services.py  →  models.py  →  PostgreSQL
 ```
 
 - Business logic in `services.py`, not views or management commands
-- Tenant permission checks via `branches/permissions.py`
+- Tenant permission checks via `branches/permissions.py`; catalog management via `products/permissions.py` (`is_staff`)
 - Use `request.active_branch` (set by middleware) for branch-scoped features
 - Pass pre-fetched `memberships` to `get_active_branch(request, memberships)` to avoid duplicate queries
 - Plain Django + plain JavaScript — no React, Vue
@@ -80,7 +82,7 @@ Use one hostname consistently for offline testing (`localhost` or `127.0.0.1`, n
 ## Security
 
 - Do not commit `config/settings.py`, `.env`, or credentials
-- Do not add product creation from the public web or phone UI unless explicitly requested
+- Do not add product creation or editing from the branch phone UI or public web unless explicitly requested
 
 ## Before large changes
 

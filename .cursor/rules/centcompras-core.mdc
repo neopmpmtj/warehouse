@@ -21,7 +21,7 @@ Central warehouse + satellite branches. Offline-capable product catalogue MVP (D
 ## Non-negotiables
 
 - PostgreSQL = source of truth; IndexedDB = read-only catalogue cache
-- Products created via CLI only (`add_product`), not from phone/web
+- Branch users: read-only catalogue; warehouse staff manage products via admin + `products/services.py`
 - Business logic in `services.py`; views/commands stay thin
 - Branch permissions via `branches/permissions.py`
 - Plain Django + plain JavaScript — no React/Vue
