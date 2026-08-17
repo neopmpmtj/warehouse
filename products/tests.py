@@ -5,14 +5,17 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from branches.models import Branch, BranchMembership
-from products.models import ProductChangeLog
+from products.models import Product, ProductChangeLog
 from products.permissions import can_manage_catalog
+from products.seed_catalog_data import PRODUCTS
 from products.services import (
     DuplicateInternalCodeError,
     create_product,
+    create_product_family,
     create_supplier,
     deactivate_product,
     get_catalog_updated_at,
+    get_product_families,
     get_products,
     get_products_for_supplier,
     get_suppliers,
@@ -21,26 +24,48 @@ from products.services import (
     reactivate_product,
     unlink_product_supplier,
     update_product,
+    update_product_family,
     update_supplier,
     validate_internal_code_available,
 )
 
 
-class ProductServiceTests(TestCase):
+class ProductTestCaseMixin:
+    def create_test_family(self, name="Test Family"):
+        return create_product_family(name)
+
+    def create_test_product(self, user, family=None, **kwargs):
+        if family is None:
+            family = self.family
+        defaults = {
+            "family": family,
+            "description": "Test product",
+            "stock": "1",
+            "price": "1.00",
+            "unit_of_measure": Product.UnitOfMeasure.PIECE,
+        }
+        defaults.update(kwargs)
+        return create_product(user, **defaults)
+
+
+class ProductServiceTests(ProductTestCaseMixin, TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
             email="staff@example.com",
             password="test-pass-123",
             is_staff=True,
         )
+        self.family = self.create_test_family()
 
     def test_create_product_writes_audit_log(self):
-        product = create_product(
+        product = self.create_test_product(
             self.user,
             description="Cement 50kg",
             stock="100",
             price="12.95",
             internal_code="CEM-50",
+            unit_of_measure=Product.UnitOfMeasure.KG,
+            reorder_level="20",
             reason="Initial stocktake",
         )
 
@@ -50,9 +75,11 @@ class ProductServiceTests(TestCase):
         self.assertEqual(log.user, self.user)
         self.assertEqual(log.reason, "Initial stocktake")
         self.assertEqual(log.changes["description"], "Cement 50kg")
+        self.assertEqual(log.changes["family"]["name"], self.family.name)
+        self.assertEqual(log.changes["unit_of_measure"], Product.UnitOfMeasure.KG)
 
     def test_update_product_detects_changes_after_in_memory_mutation(self):
-        product = create_product(
+        product = self.create_test_product(
             self.user,
             description="Original",
             stock="10",
@@ -76,19 +103,30 @@ class ProductServiceTests(TestCase):
         self.assertEqual(log.changes["description"]["old"], "Original")
         self.assertEqual(log.changes["description"]["new"], "Updated")
 
+    def test_update_product_audits_family_and_reorder_level(self):
+        other_family = self.create_test_family("Other Family")
+        product = self.create_test_product(
+            self.user,
+            description="Item",
+            reorder_level="0",
+        )
+
+        update_product(
+            self.user,
+            product,
+            family=other_family,
+            reorder_level=Decimal("15"),
+            unit_of_measure=Product.UnitOfMeasure.KG,
+        )
+
+        log = product.change_logs.latest("created_at")
+        self.assertEqual(log.changes["family"]["new"]["name"], "Other Family")
+        self.assertEqual(log.changes["reorder_level"]["new"], "15")
+        self.assertEqual(log.changes["unit_of_measure"]["new"], Product.UnitOfMeasure.KG)
+
     def test_get_products_active_only_excludes_deactivated(self):
-        active = create_product(
-            self.user,
-            description="Active item",
-            stock="1",
-            price="1.00",
-        )
-        inactive = create_product(
-            self.user,
-            description="Inactive item",
-            stock="1",
-            price="1.00",
-        )
+        active = self.create_test_product(self.user, description="Active item")
+        inactive = self.create_test_product(self.user, description="Inactive item")
         deactivate_product(self.user, inactive)
 
         active_ids = list(get_products().values_list("id", flat=True))
@@ -97,12 +135,30 @@ class ProductServiceTests(TestCase):
         self.assertEqual(active_ids, [active.id])
         self.assertEqual(sorted(all_ids), sorted([active.id, inactive.id]))
 
+    def test_get_products_filters_by_family(self):
+        pipes = self.create_test_family("Pipes")
+        cement = self.create_test_family("Cement")
+        pipe_product = self.create_test_product(
+            self.user,
+            family=pipes,
+            internal_code="PIPE-1",
+            description="Pipe",
+        )
+        self.create_test_product(
+            self.user,
+            family=cement,
+            internal_code="CEM-1",
+            description="Cement",
+        )
+
+        pipe_ids = list(get_products(family=pipes).values_list("id", flat=True))
+
+        self.assertEqual(pipe_ids, [pipe_product.id])
+
     def test_duplicate_internal_code_is_rejected(self):
-        create_product(
+        self.create_test_product(
             self.user,
             description="First",
-            stock="1",
-            price="1.00",
             internal_code="PIPE-20",
         )
 
@@ -110,27 +166,21 @@ class ProductServiceTests(TestCase):
             validate_internal_code_available("PIPE-20")
 
         with self.assertRaises(DuplicateInternalCodeError):
-            create_product(
+            self.create_test_product(
                 self.user,
                 description="Second",
-                stock="1",
-                price="1.00",
                 internal_code="PIPE-20",
             )
 
     def test_update_product_rejects_duplicate_internal_code(self):
-        create_product(
+        self.create_test_product(
             self.user,
             description="First",
-            stock="1",
-            price="1.00",
             internal_code="CODE-A",
         )
-        second = create_product(
+        second = self.create_test_product(
             self.user,
             description="Second",
-            stock="1",
-            price="1.00",
             internal_code="CODE-B",
         )
 
@@ -142,18 +192,8 @@ class ProductServiceTests(TestCase):
             )
 
     def test_get_catalog_updated_at_uses_latest_active_product(self):
-        first = create_product(
-            self.user,
-            description="First",
-            stock="1",
-            price="1.00",
-        )
-        second = create_product(
-            self.user,
-            description="Second",
-            stock="1",
-            price="1.00",
-        )
+        first = self.create_test_product(self.user, description="First")
+        second = self.create_test_product(self.user, description="Second")
 
         update_product(
             self.user,
@@ -170,24 +210,14 @@ class ProductServiceTests(TestCase):
         self.assertEqual(get_catalog_updated_at(), second.updated_at)
 
     def test_get_catalog_updated_at_is_none_when_no_active_products(self):
-        product = create_product(
-            self.user,
-            description="Only item",
-            stock="1",
-            price="1.00",
-        )
+        product = self.create_test_product(self.user, description="Only item")
         deactivate_product(self.user, product)
 
         self.assertIsNone(get_catalog_updated_at())
         self.assertEqual(get_products().count(), 0)
 
     def test_deactivate_and_reactivate_write_audit_logs(self):
-        product = create_product(
-            self.user,
-            description="Lifecycle item",
-            stock="1",
-            price="1.00",
-        )
+        product = self.create_test_product(self.user, description="Lifecycle item")
 
         deactivate_product(self.user, product, reason="End of line")
         product.refresh_from_db()
@@ -204,6 +234,31 @@ class ProductServiceTests(TestCase):
         reactivated_log = product.change_logs.latest("created_at")
         self.assertEqual(reactivated_log.action, ProductChangeLog.Action.REACTIVATED)
         self.assertEqual(reactivated_log.reason, "Back in stock")
+
+
+class ProductFamilyServiceTests(TestCase):
+    def test_get_product_families_active_only_excludes_inactive(self):
+        active = create_product_family("Active Family")
+        inactive = create_product_family("Inactive Family")
+        update_product_family(inactive, is_active=False)
+
+        names = list(get_product_families().values_list("name", flat=True))
+
+        self.assertEqual(names, ["Active Family"])
+
+    def test_update_product_family_changes_name(self):
+        family = create_product_family("Original")
+
+        updated = update_product_family(family, name="Renamed")
+
+        self.assertEqual(updated.name, "Renamed")
+
+    def test_create_product_family_respects_is_active(self):
+        inactive = create_product_family("Inactive on create", is_active=False)
+
+        self.assertFalse(inactive.is_active)
+        self.assertEqual(get_product_families(active_only=False).count(), 1)
+        self.assertEqual(get_product_families().count(), 0)
 
 
 class ProductPermissionTests(TestCase):
@@ -264,7 +319,43 @@ class ProductAdminAccessTests(TestCase):
         self.assertIn(response.status_code, (302, 403))
 
 
-class ProductApiTests(TestCase):
+class ProductFamilyAdminAccessTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.staff_user = user_model.objects.create_user(
+            email="staff@example.com",
+            password="test-pass-123",
+            is_staff=True,
+        )
+        self.branch_user = user_model.objects.create_user(
+            email="branch@example.com",
+            password="test-pass-123",
+        )
+        branch = Branch.objects.create(name="Test Branch")
+        BranchMembership.objects.create(
+            user=self.branch_user,
+            branch=branch,
+            role=BranchMembership.Role.ADMIN,
+        )
+        self.client = Client()
+        self.family_changelist_url = reverse("admin:products_productfamily_changelist")
+
+    def test_staff_user_can_open_product_family_admin(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(self.family_changelist_url)
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_branch_admin_cannot_open_product_family_admin(self):
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(self.family_changelist_url)
+
+        self.assertIn(response.status_code, (302, 403))
+
+
+class ProductApiTests(ProductTestCaseMixin, TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(
             email="branch@example.com",
@@ -278,9 +369,10 @@ class ProductApiTests(TestCase):
         )
         self.client = Client()
         self.client.force_login(self.user)
+        self.family = self.create_test_family()
 
     def test_product_api_includes_catalog_updated_at(self):
-        create_product(
+        self.create_test_product(
             None,
             description="Visible product",
             stock="3",
@@ -303,17 +395,13 @@ class ProductApiTests(TestCase):
         self.assertEqual(response.json()["error"], "Authentication required")
 
     def test_product_api_excludes_deactivated_products(self):
-        active = create_product(
+        active = self.create_test_product(
             None,
             description="Still active",
-            stock="1",
-            price="1.00",
         )
-        inactive = create_product(
+        inactive = self.create_test_product(
             None,
             description="Was active",
-            stock="1",
-            price="1.00",
         )
         deactivate_product(None, inactive)
 
@@ -327,11 +415,9 @@ class ProductApiTests(TestCase):
         self.assertIsNotNone(payload["catalog_updated_at"])
 
     def test_product_api_returns_null_catalog_updated_at_when_empty(self):
-        product = create_product(
+        product = self.create_test_product(
             None,
             description="Temporary item",
-            stock="1",
-            price="1.00",
         )
         deactivate_product(None, product)
 
@@ -345,22 +431,39 @@ class ProductApiTests(TestCase):
         self.assertEqual(payload["products"], [])
         self.assertIsNone(payload["catalog_updated_at"])
 
+    def test_product_api_does_not_expose_family_or_uom(self):
+        self.create_test_product(
+            None,
+            description="Branch visible only",
+            unit_of_measure=Product.UnitOfMeasure.KG,
+        )
 
-class SupplierServiceTests(TestCase):
+        response = self.client.get(reverse("product_list"))
+        payload = response.json()["products"][0]
+
+        self.assertEqual(
+            set(payload.keys()),
+            {"id", "description", "stock", "price"},
+        )
+
+
+class SupplierServiceTests(ProductTestCaseMixin, TestCase):
     def setUp(self):
         self.staff_user = get_user_model().objects.create_user(
             email="staff@example.com",
             password="test-pass-123",
             is_staff=True,
         )
+        self.family = self.create_test_family()
 
     def test_product_can_have_multiple_suppliers(self):
-        product = create_product(
+        product = self.create_test_product(
             self.staff_user,
             description="Cement 50kg",
             stock="100",
             price="12.95",
             internal_code="CEM-50",
+            unit_of_measure=Product.UnitOfMeasure.KG,
         )
         first = create_supplier(name="BuildSupply Ltd", phone="+351 210 000 001")
         second = create_supplier(name="Porto Materials Co", email="sales@example.com")
@@ -380,12 +483,7 @@ class SupplierServiceTests(TestCase):
         )
 
     def test_link_product_supplier_is_idempotent(self):
-        product = create_product(
-            self.staff_user,
-            description="Pipe",
-            stock="1",
-            price="1.00",
-        )
+        product = self.create_test_product(self.staff_user, description="Pipe")
         supplier = create_supplier(name="BuildSupply Ltd")
 
         link_product_supplier(product, supplier)
@@ -394,12 +492,7 @@ class SupplierServiceTests(TestCase):
         self.assertEqual(product.product_suppliers.count(), 1)
 
     def test_unlink_product_supplier_removes_link(self):
-        product = create_product(
-            self.staff_user,
-            description="Pipe",
-            stock="1",
-            price="1.00",
-        )
+        product = self.create_test_product(self.staff_user, description="Pipe")
         supplier = create_supplier(name="BuildSupply Ltd")
         link_product_supplier(product, supplier)
 
@@ -408,11 +501,9 @@ class SupplierServiceTests(TestCase):
         self.assertEqual(get_suppliers_for_product(product).count(), 0)
 
     def test_get_products_for_supplier_returns_linked_products(self):
-        product = create_product(
+        product = self.create_test_product(
             self.staff_user,
             description="Cement",
-            stock="1",
-            price="1.00",
             internal_code="CEM-50",
         )
         supplier = create_supplier(name="BuildSupply Ltd")

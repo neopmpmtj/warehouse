@@ -2,17 +2,19 @@ from django import forms
 from django.contrib import admin
 from django.core.exceptions import PermissionDenied, ValidationError
 
-from .models import Product, ProductChangeLog, ProductSupplier, Supplier
+from .models import Product, ProductChangeLog, ProductFamily, ProductSupplier, Supplier
 from .permissions import can_manage_catalog
 from .services import (
     DuplicateInternalCodeError,
     create_product,
+    create_product_family,
     create_supplier,
     deactivate_product,
     link_product_supplier,
     reactivate_product,
     unlink_product_supplier,
     update_product,
+    update_product_family,
     update_supplier,
     validate_internal_code_available,
 )
@@ -29,10 +31,13 @@ class ProductAdminForm(forms.ModelForm):
     class Meta:
         model = Product
         fields = (
+            "family",
             "internal_code",
             "description",
             "stock",
             "price",
+            "unit_of_measure",
+            "reorder_level",
         )
 
     def clean_internal_code(self):
@@ -87,14 +92,18 @@ class ProductAdmin(admin.ModelAdmin):
         "id",
         "internal_code",
         "description",
+        "family",
         "stock",
+        "unit_of_measure",
+        "reorder_level",
         "price",
         "supplier_count",
         "is_active",
         "updated_at",
     )
-    list_filter = ("is_active",)
-    search_fields = ("internal_code", "description")
+    list_filter = ("is_active", "family", "unit_of_measure")
+    search_fields = ("internal_code", "description", "family__name")
+    autocomplete_fields = ("family",)
     readonly_fields = ("is_active", "created_at", "updated_at")
     inlines = (ProductSupplierInline, ProductChangeLogInline)
     actions = ("deactivate_products", "reactivate_products")
@@ -103,9 +112,12 @@ class ProductAdmin(admin.ModelAdmin):
             None,
             {
                 "fields": (
+                    "family",
                     "internal_code",
                     "description",
                     "stock",
+                    "unit_of_measure",
+                    "reorder_level",
                     "price",
                     "is_active",
                     "created_at",
@@ -120,7 +132,7 @@ class ProductAdmin(admin.ModelAdmin):
     )
 
     def get_queryset(self, request):
-        return super().get_queryset(request).include_inactive()
+        return super().get_queryset(request).include_inactive().select_related("family")
 
     @admin.display(description="Suppliers")
     def supplier_count(self, obj):
@@ -153,19 +165,25 @@ class ProductAdmin(admin.ModelAdmin):
                     request.user,
                     obj,
                     reason=reason,
+                    family=form.cleaned_data["family"],
                     internal_code=form.cleaned_data["internal_code"],
                     description=form.cleaned_data["description"],
                     stock=form.cleaned_data["stock"],
                     price=form.cleaned_data["price"],
+                    unit_of_measure=form.cleaned_data["unit_of_measure"],
+                    reorder_level=form.cleaned_data["reorder_level"],
                 )
                 obj.pk = updated.pk
             else:
                 created = create_product(
                     request.user,
+                    family=form.cleaned_data["family"],
                     description=form.cleaned_data["description"],
                     stock=form.cleaned_data["stock"],
                     price=form.cleaned_data["price"],
+                    unit_of_measure=form.cleaned_data["unit_of_measure"],
                     internal_code=form.cleaned_data.get("internal_code", ""),
+                    reorder_level=form.cleaned_data["reorder_level"],
                     reason=reason,
                 )
                 obj.pk = created.pk
@@ -308,6 +326,83 @@ class SupplierAdmin(admin.ModelAdmin):
                 email=form.cleaned_data["email"],
                 phone=form.cleaned_data["phone"],
                 notes=form.cleaned_data["notes"],
+            )
+            obj.pk = created.pk
+
+        obj.refresh_from_db()
+
+
+class ProductFamilyProductInline(admin.TabularInline):
+    model = Product
+    extra = 0
+    fields = ("internal_code", "description", "stock", "unit_of_measure", "is_active")
+    readonly_fields = fields
+    show_change_link = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProductFamily)
+class ProductFamilyAdmin(admin.ModelAdmin):
+    list_display = ("name", "product_count", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("name",)
+    readonly_fields = ("created_at", "updated_at")
+    inlines = (ProductFamilyProductInline,)
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "name",
+                    "is_active",
+                    "created_at",
+                    "updated_at",
+                )
+            },
+        ),
+    )
+
+    @admin.display(description="Products")
+    def product_count(self, obj):
+        return obj.products.count()
+
+    def has_module_permission(self, request):
+        return can_manage_catalog(request.user)
+
+    def has_view_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_add_permission(self, request):
+        return can_manage_catalog(request.user)
+
+    def has_change_permission(self, request, obj=None):
+        return can_manage_catalog(request.user)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if not can_manage_catalog(request.user):
+            raise PermissionDenied
+
+        if change:
+            update_product_family(
+                obj,
+                name=form.cleaned_data["name"],
+                is_active=form.cleaned_data["is_active"],
+            )
+        else:
+            created = create_product_family(
+                name=form.cleaned_data["name"],
+                is_active=form.cleaned_data["is_active"],
             )
             obj.pk = created.pk
 

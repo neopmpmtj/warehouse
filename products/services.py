@@ -6,11 +6,19 @@ from django.db.models import Max
 
 from logging_utils import get_logger
 
-from .models import Product, ProductChangeLog, ProductSupplier, Supplier
+from .models import Product, ProductChangeLog, ProductFamily, ProductSupplier, Supplier
 
 logger = get_logger("centcompras.products")
 
-UPDATABLE_FIELDS = ("internal_code", "description", "stock", "price")
+UPDATABLE_FIELDS = (
+    "family",
+    "internal_code",
+    "description",
+    "stock",
+    "price",
+    "unit_of_measure",
+    "reorder_level",
+)
 
 
 class DuplicateInternalCodeError(ValidationError):
@@ -24,6 +32,8 @@ class DuplicateInternalCodeError(ValidationError):
 def _serialize_value(value):
     if isinstance(value, Decimal):
         return str(value)
+    if isinstance(value, ProductFamily):
+        return {"id": value.pk, "name": value.name}
     return value
 
 
@@ -42,6 +52,12 @@ def validate_internal_code_available(internal_code, exclude_product_id=None):
 
     if queryset.exists():
         raise DuplicateInternalCodeError(internal_code)
+
+
+def _resolve_family(family):
+    if isinstance(family, ProductFamily):
+        return family
+    return ProductFamily.objects.get(pk=family)
 
 
 def _log_change(product, user, action, changes, reason=""):
@@ -67,15 +83,29 @@ def _save_product(product, update_fields=None):
 
 
 @transaction.atomic
-def create_product(user, description, stock, price, internal_code="", reason=""):
+def create_product(
+    user,
+    family,
+    description,
+    stock,
+    price,
+    unit_of_measure,
+    internal_code="",
+    reorder_level="0",
+    reason="",
+):
     internal_code = _normalize_internal_code(internal_code)
     validate_internal_code_available(internal_code)
+    family = _resolve_family(family)
 
     product = Product(
+        family=family,
         internal_code=internal_code,
         description=description,
         stock=Decimal(str(stock)),
         price=Decimal(str(price)),
+        unit_of_measure=unit_of_measure,
+        reorder_level=Decimal(str(reorder_level)),
         is_active=True,
     )
     _save_product(product, update_fields=None)
@@ -85,19 +115,23 @@ def create_product(user, description, stock, price, internal_code="", reason="")
         user,
         ProductChangeLog.Action.CREATED,
         {
+            "family": _serialize_value(product.family),
             "internal_code": _serialize_value(product.internal_code),
             "description": product.description,
             "stock": _serialize_value(product.stock),
             "price": _serialize_value(product.price),
+            "unit_of_measure": product.unit_of_measure,
+            "reorder_level": _serialize_value(product.reorder_level),
         },
         reason=reason,
     )
 
     logger.info(
-        "Created product id=%s internal_code=%r description=%r stock=%s price=%s user=%s",
+        "Created product id=%s internal_code=%r description=%r family=%s stock=%s price=%s user=%s",
         product.id,
         product.internal_code,
         product.description,
+        product.family.name,
         product.stock,
         product.price,
         getattr(user, "email", None),
@@ -115,19 +149,19 @@ def update_product(user, product, reason="", **fields):
     if unknown:
         raise ValueError(f"Cannot update fields: {', '.join(sorted(unknown))}")
 
-    # Reload from DB — callers (e.g. Django admin) may pass an in-memory instance
-    # already mutated by form.save(commit=False), which would hide real diffs.
     product = Product.objects.select_for_update().get(pk=product.pk)
 
     changes = {}
     pending_internal_code = None
 
     for field_name, new_value in fields.items():
-        if field_name in ("stock", "price"):
+        if field_name in ("stock", "price", "reorder_level"):
             new_value = Decimal(str(new_value))
         elif field_name == "internal_code":
             new_value = _normalize_internal_code(new_value)
             pending_internal_code = new_value
+        elif field_name == "family":
+            new_value = _resolve_family(new_value)
 
         old_value = getattr(product, field_name)
         if old_value != new_value:
@@ -215,10 +249,13 @@ def reactivate_product(user, product, reason=""):
     return product
 
 
-def get_products(active_only=True):
-    queryset = Product.objects.all().order_by("id")
+def get_products(active_only=True, family=None):
+    queryset = Product.objects.select_related("family").order_by("id")
     if active_only:
         queryset = queryset.active()
+    if family is not None:
+        family = _resolve_family(family)
+        queryset = queryset.filter(family=family)
     return queryset
 
 
@@ -231,6 +268,67 @@ def get_catalog_updated_at(active_only=True):
 
 def get_product_history(product):
     return product.change_logs.select_related("user").order_by("-created_at")
+
+
+FAMILY_UPDATABLE_FIELDS = ("name", "is_active")
+
+
+def create_product_family(name, is_active=True):
+    family = ProductFamily(
+        name=name.strip(),
+        is_active=is_active,
+    )
+    family.save()
+
+    logger.info(
+        "Created product family id=%s name=%r",
+        family.id,
+        family.name,
+    )
+
+    return family
+
+
+@transaction.atomic
+def update_product_family(family, **fields):
+    if not fields:
+        return family
+
+    unknown = set(fields) - set(FAMILY_UPDATABLE_FIELDS)
+    if unknown:
+        raise ValueError(f"Cannot update fields: {', '.join(sorted(unknown))}")
+
+    family = ProductFamily.objects.select_for_update().get(pk=family.pk)
+
+    update_fields = []
+    for field_name, new_value in fields.items():
+        if field_name == "name":
+            new_value = new_value.strip()
+        old_value = getattr(family, field_name)
+        if old_value != new_value:
+            setattr(family, field_name, new_value)
+            update_fields.append(field_name)
+
+    if not update_fields:
+        return family
+
+    update_fields.append("updated_at")
+    family.save(update_fields=update_fields)
+
+    logger.info(
+        "Updated product family id=%s fields=%s",
+        family.id,
+        update_fields,
+    )
+
+    return family
+
+
+def get_product_families(active_only=True):
+    queryset = ProductFamily.objects.all()
+    if active_only:
+        queryset = queryset.filter(is_active=True)
+    return queryset.order_by("name")
 
 
 SUPPLIER_UPDATABLE_FIELDS = (

@@ -3,6 +3,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from branches.models import Branch, BranchMembership
+from products.seed_catalog_data import PRODUCTS
 from branches.permissions import (
     can_create_order,
     can_edit_or_delete_order,
@@ -176,3 +177,4 @@ class SeedDevDataCommandTests(TestCase):
         self.assertEqual(Product.objects.count(), product_count)
         self.assertGreaterEqual(branch_count, 3)
         self.assertGreaterEqual(user_count, 4)
+        self.assertGreaterEqual(product_count, len(PRODUCTS))
