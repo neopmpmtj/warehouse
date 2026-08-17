@@ -6,6 +6,65 @@ This repository is an early-stage MVP built incrementally: one concept per phase
 
 ---
 
+## Project status (handoff)
+
+*Last updated: August 2026 — read this section first when resuming work.*
+
+### Completed
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| **Product catalogue MVP** | Done | Model, CLI, API, offline HTML/JS, Service Worker, IndexedDB — see [`products/README.md`](products/README.md) |
+| **Auth & tenancy foundation** | Done | `accounts` (email login), `branches` (Branch, BranchMembership, roles, middleware, picker) |
+| **Login-protected catalogue** | Done | `/` and `/api/products/` require session; API returns 401 when logged out |
+| **Centralized logging** | Done | `logging_utils` → rotating files in `logs/` |
+| **Project setup docs** | Done | Root README, `requirements.txt`, `config/settings.example.py`, `AGENTS.md`, `.cursor/` rules |
+| **Manual testing** | Done | DB setup, migrate, admin seed, login, branch picker, catalogue, logging verified by developer |
+
+**Design choices locked in for later phases:**
+
+- `Product` catalogue is **global** (central warehouse) — no `branch_id` on products.
+- Orders (future) will be **branch-scoped** with `branch` + `created_by` FKs.
+- Dev login: email + password. Production: **Google OAuth** (not implemented yet).
+- Users are provisioned in admin — no public signup.
+
+**Infrastructure added this session:**
+
+```text
+accounts/          custom User, login/logout templates
+branches/          Branch, BranchMembership, permissions.py, middleware, session helpers
+logging_utils/     get_logger(), Django app, logs/ output
+config/settings.example.py
+.cursor/rules/     centcompras-core, django-python, offline-frontend, tenancy-future
+AGENTS.md          agent instructions for Cursor
+```
+
+### Not started / pending
+
+| Area | Priority | Notes |
+|------|----------|-------|
+| **Orders workflow** | Next business phase | Model, API, cart, offline queue, idempotent sync — see [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) |
+| **Unit tests** | Later | `accounts/tests.py`, `branches/tests.py`, `products/tests.py` are stubs only |
+| **Integration tests** | Later | Auth flow, branch middleware, catalogue API, offline behaviour |
+| **Google OAuth** | Production | `django-allauth` or similar; email `User` model is already OAuth-ready |
+| **Public signup / password reset** | Later | Admin creates users for now |
+| **Product admin UI** | Later | Products still CLI-only (`add_product`) |
+| **Branch switcher in catalogue** | Later | Multi-branch users pick at login; no in-app switch yet |
+| **Production deployment** | Later | HTTPS, env-based secrets, PWA manifest |
+
+### Recommended next session
+
+1. Skim this section and [Setup](#setup) if environment is new.
+2. Read [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 for the Order model design.
+3. Implement **orders** incrementally (model → API → permissions → offline queue).
+4. Add **automated tests** when a feature stabilizes — not required before orders, but plan for them.
+
+### Development philosophy
+
+One concept per phase. Reusable `services.py` layer. Plain Django + plain JavaScript. Do not dump a finished application in one step. See [`products/products_docs/aux_instructions.md`](products/products_docs/aux_instructions.md).
+
+---
+
 ## Business scenario
 
 - A central warehouse holds the master product catalogue and stock levels.
@@ -97,6 +156,8 @@ warehouse/
 ├── accounts/                 # custom User, login/logout
 ├── branches/                 # Branch, BranchMembership, active branch middleware
 ├── logging_utils/            # centralized logging (console + logs/)
+├── AGENTS.md                 # Cursor agent instructions
+├── .cursor/                  # Cursor rules and commands
 ├── docs/
 │   └── warehouse-tenancy-setup.md
 └── products/                 # catalogue app
@@ -272,24 +333,44 @@ Service Worker → caches HTML + JS (app shell, offline page load)
 
 ## Further reading
 
-- [`products/README.md`](products/README.md) — detailed catalogue MVP documentation, offline behaviour, and testing checklist.
-- [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) — tenancy design reference (orders section is next phase).
+- **Start here:** [Project status (handoff)](#project-status-handoff) in this file
+- [`products/README.md`](products/README.md) — catalogue MVP build log, offline behaviour, manual testing checklist
+- [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) — tenancy design; **§6–7** for Order model (next phase)
+- [`AGENTS.md`](AGENTS.md) — concise instructions for AI agents in Cursor
+- [`products/products_docs/aux_instructions.md`](products/products_docs/aux_instructions.md) — incremental development pace
 
 ---
 
 ## What is explicitly not built yet
 
-- Google OAuth (production login — dev uses email + password)
-- `Order` model and order views/API
-- Customers
+The following do **not** exist today. The [Project status](#project-status-handoff) table above is the canonical handoff reference.
+
+### Business features
+
+- `orders` app — create, list, edit, delete orders
 - Shopping cart
+- Customers
 - Offline order queue in IndexedDB
 - Order synchronization when connectivity returns
-- Idempotent order submission (client-side order IDs to prevent duplicates on retry)
-- Product editing or creation from the phone or public web UI
-- Django admin registration for products
+- Idempotent order submission (client-side order IDs on retry)
 - Stock reservation or conflict handling
+- Product editing or creation from phone or public web UI
+- Django admin registration for `Product`
+- In-app branch switcher (only login-time picker for multi-branch users)
+
+### Auth & production
+
+- Google OAuth (production login — dev uses email + password)
+- Public signup
+- Password reset flow
+
+### Quality & operations
+
+- **Unit tests** — no real tests; stub files only
+- **Integration tests** — not started
 - Production deployment and HTTPS
 - PWA manifest / install prompt
 
-The planned next major phase is the **ordering workflow**: branch users create orders online or queue them offline, then sync to the central warehouse with duplicate-safe retries.
+### Planned next major phase
+
+**Ordering workflow:** branch users create orders online or queue them offline, then sync to the central warehouse with duplicate-safe retries. Builds on existing `Branch`, `BranchMembership`, `permissions.py`, and `request.active_branch`.

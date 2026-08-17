@@ -29,7 +29,7 @@ class ActiveBranchMiddleware:
 
         if request.user.is_authenticated:
             memberships = list(get_user_branches(request.user))
-            request.active_branch = get_active_branch(request)
+            request.active_branch = get_active_branch(request, memberships)
 
             if not self._is_exempt(request.path):
                 if not memberships:

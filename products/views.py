@@ -14,12 +14,12 @@ def product_list(request):
         logger.warning("Unauthenticated catalogue API request from %s", request.META.get("REMOTE_ADDR"))
         return JsonResponse({"error": "Authentication required"}, status=401)
 
-    products = get_products()
+    products = list(get_products())
     logger.info(
         "Catalogue API: user=%s branch=%s products=%s",
         request.user.email,
         getattr(request, "active_branch", None),
-        products.count(),
+        len(products),
     )
 
     data = []

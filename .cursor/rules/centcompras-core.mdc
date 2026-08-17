@@ -14,7 +14,9 @@ Central warehouse + satellite branches. Offline-capable product catalogue MVP (D
 - `accounts` — custom User, email login
 - `branches` — Branch, BranchMembership, active branch middleware
 - `products` — catalogue, API, CLI, offline web UI
+- `logging_utils` — centralized logging to `logs/`
 - `orders` — not built yet
+- **Tests** — stubs only; not started
 
 ## Non-negotiables
 
@@ -27,6 +29,6 @@ Central warehouse + satellite branches. Offline-capable product catalogue MVP (D
 
 ## References
 
-- @README.md — project overview
+- @README.md — **Project status (handoff)** section first when resuming
 - @AGENTS.md — agent instructions
 - @docs/warehouse-tenancy-setup.md — order design (next phase)

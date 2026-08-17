@@ -26,6 +26,4 @@ def create_product(description, stock, price):
 
 
 def get_products():
-    products = Product.objects.all().order_by("id")
-    logger.debug("Fetched %s products from database", products.count())
-    return products
+    return Product.objects.all().order_by("id")

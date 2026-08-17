@@ -9,7 +9,7 @@ def get_user_branches(user):
     )
 
 
-def get_active_branch(request):
+def get_active_branch(request, memberships=None):
     if not request.user.is_authenticated:
         return None
 
@@ -17,7 +17,10 @@ def get_active_branch(request):
     if branch_id is None:
         return None
 
-    for membership in get_user_branches(request.user):
+    if memberships is None:
+        memberships = get_user_branches(request.user)
+
+    for membership in memberships:
         if membership.branch_id == branch_id:
             return membership.branch
 

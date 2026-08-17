@@ -1,14 +1,19 @@
 # CentCompras — Agent instructions
 
-Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branches**. Branch staff browse a product catalogue from a phone browser; orders are the next business phase.
+Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branches**. Branch staff browse a product catalogue from a phone browser; **orders** are the next business phase.
+
+**Read [`README.md` → Project status (handoff)](README.md#project-status-handoff) first** for what is done vs pending.
 
 ## Current state (what exists)
 
 ### Apps
 
-- **`accounts`** — custom `User` (email login), login/logout views
-- **`branches`** — `Branch`, `BranchMembership`, `permissions.py`, `ActiveBranchMiddleware`, branch picker
-- **`products`** — catalogue model, service layer, API, CLI, offline-capable web UI
+| App | Purpose |
+|-----|---------|
+| `accounts` | Custom `User` (email login), login/logout |
+| `branches` | `Branch`, `BranchMembership`, `permissions.py`, `ActiveBranchMiddleware`, branch picker |
+| `products` | Catalogue model, service layer, API, CLI, offline web UI |
+| `logging_utils` | `get_logger("centcompras.<app>")`, rotating logs in `logs/` |
 
 ### Auth and tenancy
 
@@ -17,29 +22,33 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 - Active branch in session (`active_branch_id`); auto-set for single-branch users
 - Catalogue and API require login; API returns 401 when unauthenticated
 - Google OAuth planned for production — not implemented in dev
+- Logout on no-branch page uses POST form (Django 6.1 `LogoutView`)
 
 ### Catalogue
 
 - **Product fields:** `description`, `stock` (decimal), `price` (USD)
+- **Global catalogue** — no `branch_id` on `Product` (warehouse stock for all branches)
 - **Product creation:** CLI only — `python manage.py add_product "..." stock price`
 - **API:** `GET /api/products/` (authenticated)
 - **Offline:** Service Worker + IndexedDB (read-only catalogue cache)
 
 ### Logging
 
-- `logging_utils` package — `get_logger("centcompras.<app>")`
-- Rotating log files under `logs/` (gitignored)
-- Initial logging in `products`, `branches` middleware/views
+- `logging_utils` — console + `logs/*.log` (gitignored)
+- Loggers: `centcompras.products`, `centcompras.branches`, `centcompras.django`, etc.
+- Config: `logging_utils/logging_config.py`
 
-PostgreSQL is the source of truth. IndexedDB is not an independent warehouse database.
+PostgreSQL is the source of truth. IndexedDB is a read-only local cache.
 
 ## Not implemented yet
 
-- `orders` app and order workflow
+- `orders` app and order workflow (next phase)
+- Unit tests and integration tests (stub files only — defer until features stabilize)
 - Google OAuth, public signup, password reset
 - Offline order queue and sync
+- Product admin, in-app branch switcher
 
-See root `README.md` for the full list.
+Full list: [`README.md` → What is explicitly not built yet](README.md#what-is-explicitly-not-built-yet)
 
 ## Architecture conventions
 
@@ -47,16 +56,12 @@ See root `README.md` for the full list.
 CLI / API / views  →  services.py  →  models.py  →  PostgreSQL
 ```
 
-- Put reusable business/DB logic in `services.py`, not in views or management commands
+- Business logic in `services.py`, not views or management commands
 - Tenant permission checks via `branches/permissions.py`
 - Use `request.active_branch` (set by middleware) for branch-scoped features
-- Plain Django + plain JavaScript — no React, Vue, or similar
-- Minimize diff scope; match existing patterns in the file you edit
-
-## Development pace
-
-- One concept per phase; avoid large finished-app dumps
-- See `products/products_docs/aux_instructions.md` for interaction style
+- Pass pre-fetched `memberships` to `get_active_branch(request, memberships)` to avoid duplicate queries
+- Plain Django + plain JavaScript — no React, Vue
+- One concept per phase; no large application dumps
 
 ## Commands
 
@@ -67,8 +72,10 @@ python manage.py migrate
 python manage.py createsuperuser
 python manage.py runserver
 python manage.py add_product "Description" 100 12.95
-python manage.py test
+python manage.py test   # no real tests yet
 ```
+
+Use one hostname consistently for offline testing (`localhost` or `127.0.0.1`, not both).
 
 ## Security
 
@@ -77,5 +84,6 @@ python manage.py test
 
 ## Before large changes
 
-1. Read root `README.md` for scope
-2. Read `docs/warehouse-tenancy-setup.md` for order/tenancy design (orders section)
+1. [`README.md`](README.md) — project status and scope
+2. [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) — Order model design (§6–7)
+3. [`products/products_docs/aux_instructions.md`](products/products_docs/aux_instructions.md) — development pace
