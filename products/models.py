@@ -57,6 +57,7 @@ class ProductChangeLog(models.Model):
     )
     action = models.CharField(max_length=20, choices=Action.choices)
     changes = models.JSONField(default=dict)
+    reason = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -10,54 +10,78 @@ This repository is an early-stage MVP built incrementally: one concept per phase
 
 *Last updated: August 2026 — read this section first when resuming work.*
 
+### Where we stand
+
+The **catalogue module is complete** for the current MVP scope: global products, warehouse-staff management with audit trail, branch read-only browsing (online + offline), and local dev seed data. The **next business phase is orders** — nothing in `orders/` exists yet.
+
 ### Completed
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| **Product catalogue MVP** | Done | Model, CLI, API, offline HTML/JS, Service Worker, IndexedDB — see [`products/README.md`](products/README.md) |
+| **Product catalogue MVP** | Done | Model, API, offline HTML/JS, Service Worker, IndexedDB — see [`products/README.md`](products/README.md) |
 | **Auth & tenancy foundation** | Done | `accounts` (email login), `branches` (Branch, BranchMembership, roles, middleware, picker) |
 | **Login-protected catalogue** | Done | `/` and `/api/products/` require session; API returns 401 when logged out |
 | **Centralized logging** | Done | `logging_utils` → rotating files in `logs/` |
-| **Catalog management & audit** | Done | Staff admin, soft delete, `ProductChangeLog`, service-layer mutations |
+| **Catalog management & audit** | Done | `Product` lifecycle fields, `ProductChangeLog`, soft delete, staff admin via `products/services.py` |
+| **Catalog polish** | Done | `catalog_updated_at` in API + UI; duplicate `internal_code` validation; optional audit `reason`; 7 tests in `products/tests.py` |
+| **Dev seed script** | Done | [`scripts/seed_dev_data.sh`](scripts/seed_dev_data.sh) — branches, branch users, **warehouse user**, sample products |
 | **Project setup docs** | Done | Root README, `requirements.txt`, `config/settings.example.py`, `AGENTS.md`, `.cursor/` rules |
-| **Manual testing** | Done | DB setup, migrate, admin seed, login, branch picker, catalogue, logging verified by developer |
 
 **Design choices locked in for later phases:**
 
 - `Product` catalogue is **global** (central warehouse) — no `branch_id` on products.
 - Orders (future) will be **branch-scoped** with `branch` + `created_by` FKs.
 - Dev login: email + password. Production: **Google OAuth** (not implemented yet).
-- Users are provisioned in admin — no public signup.
+- Users are provisioned in admin or seed script — no public signup.
+- **Catalog mutations** = warehouse staff (`is_staff`) only. **Branch roles** = order permissions (future), not catalogue edit.
 
-**Infrastructure added this session:**
+### User roles (important — practice with these)
 
-```text
-accounts/          custom User, login/logout templates
-branches/          Branch, BranchMembership, permissions.py, middleware, session helpers
-logging_utils/     get_logger(), Django app, logs/ output
-config/settings.example.py
-.cursor/rules/     centcompras-core, django-python, offline-frontend, tenancy-future
-AGENTS.md          agent instructions for Cursor
-```
+| User type | Example (after seed) | Can do today |
+|-----------|----------------------|--------------|
+| **Warehouse staff** | `warehouse@centcompras.dev` | Add/edit/deactivate products in `/admin/products/`; audit log |
+| **Branch admin** | `admin.lisbon@centcompras.dev` | Log in, browse catalogue at `/` (read-only); future: orders in their branch |
+| **Branch manager / user** | (create in admin) | Same browse access; different order permissions later |
+| **Django superuser** | from `createsuperuser` | Site admin: users, branches, memberships — not the same as warehouse or branch admin unless you grant `is_staff` / memberships |
+
+After `./scripts/seed_dev_data.sh`, all seeded users share password **`devpass123`**.
 
 ### Not started / pending
 
 | Area | Priority | Notes |
 |------|----------|-------|
-| **Orders workflow** | Next business phase | Model, API, cart, offline queue, idempotent sync — see [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) |
-| **Unit tests** | Later | `accounts/tests.py`, `branches/tests.py`, `products/tests.py` are stubs only |
-| **Integration tests** | Later | Auth flow, branch middleware, catalogue API, offline behaviour |
-| **Google OAuth** | Production | `django-allauth` or similar; email `User` model is already OAuth-ready |
-| **Public signup / password reset** | Later | Admin creates users for now |
-| **Branch switcher in catalogue** | Later | Multi-branch users pick at login; no in-app switch yet |
-| **Production deployment** | Later | HTTPS, env-based secrets, PWA manifest |
+| **Orders workflow** | **Next** | Model, API, cart, offline queue, idempotent sync — see [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 |
+| **Order business rules** | Before coding orders | Multi-line cart vs single line; stock decrement timing; cancel/edit policy — agree in design session first |
+| **Tests (accounts/branches)** | Later | `accounts/tests.py`, `branches/tests.py` still stubs; `products/tests.py` has 7 catalog tests |
+| **Integration tests** | Later | Full auth → branch middleware → catalogue API → offline flow |
+| **Google OAuth** | Production | `django-allauth` or similar |
+| **Public signup / password reset** | Later | |
+| **Branch switcher in catalogue** | Later | Multi-branch users pick at login only; no in-app switch |
+| **Production deployment** | Later | HTTPS, env secrets, PWA manifest |
+| **Catalog extras (deferred)** | Later | Categories, LLM/vector search on `description`, bulk import, plain HTML warehouse UI |
 
 ### Recommended next session
 
-1. Skim this section and [Setup](#setup) if environment is new.
-2. **Greenfield DB reset** after catalog schema change: drop/recreate `centcompras_db`, then `python manage.py migrate`.
-3. Read [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 for the Order model design.
-4. Implement **orders** incrementally (model → API → permissions → offline queue).
+1. Read this section and [User roles](#user-roles-important--practice-with-these) above.
+2. Fresh environment: `python manage.py migrate` then `./scripts/seed_dev_data.sh`.
+3. Practice: warehouse user → catalog admin; branch user → `/` catalogue; deactivate a product → confirm it disappears from branch API.
+4. Read [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 and **agree order business rules** before implementing `orders/`.
+5. Implement **orders** incrementally: model → services → permissions → API → UI → offline queue.
+
+### Key files (catalog — current module)
+
+```text
+products/models.py           Product, ProductChangeLog
+products/services.py         create/update/deactivate/reactivate, get_products, get_catalog_updated_at
+products/permissions.py      can_manage_catalog (is_staff)
+products/admin.py            staff-only product admin + audit inline
+products/views.py              GET /api/products/ (active only + catalog_updated_at)
+products/tests.py              7 tests — run: python manage.py test products
+branches/management/commands/seed_dev_data.py
+scripts/seed_dev_data.sh       wrapper: migrate + seed
+```
+
+Migrations: `products/0001_initial.py`, `products/0002_productchangelog_reason.py`. Run `migrate` after pull if schema changed.
 
 ### Development philosophy
 
@@ -122,6 +146,12 @@ Production will use Google OAuth (not implemented in dev — email/password logi
   ```text
   GET /api/products/
   ```
+
+  Response includes `catalog_updated_at` (ISO timestamp of the latest active product change) for offline stale-catalogue messaging.
+
+- `ProductChangeLog.reason` — optional staff note on create/update/deactivate/reactivate.
+- Duplicate non-empty `internal_code` values are rejected with a clear validation error in admin and services.
+- Tests in [`products/tests.py`](products/tests.py) cover service diffs, active filtering, duplicate codes, and API metadata.
 
 ### Product catalogue (browser)
 
@@ -240,7 +270,30 @@ python manage.py createsuperuser   # prompts for email + password (not username)
 
 `createsuperuser` creates a **site admin** for `/admin/`. That user can manage branches and users but **cannot browse the catalogue** until you also add a `BranchMembership` (step 5).
 
-### 5. Seed test data (via `/admin/`)
+### 5. Seed test data
+
+**Quick seed (recommended for local learning):**
+
+```bash
+chmod +x scripts/seed_dev_data.sh   # first time only
+./scripts/seed_dev_data.sh
+```
+
+This creates:
+
+| Item | Details |
+|------|---------|
+| **Branches** | Lisbonbranch, portobranch, vilarealbranch |
+| **Branch users** | `admin.lisbon@…`, `admin.porto@…`, `admin.vilareal@…` — **branch admin** role in their branch |
+| **Warehouse staff** | `warehouse@centcompras.dev` — manages **catalog** in `/admin/products/` (`is_staff`) |
+| **Products** | 3 sample items via `products/services.py` |
+| **Password** | `devpass123` for all seeded users (override with `--password`) |
+
+Re-running the script is safe (idempotent). Options: `--skip-products`, `--skip-warehouse`.
+
+**Important:** branch **admin** role is for future **order** permissions per branch. **Catalogue** add/edit/deactivate is **warehouse staff only** (`is_staff`), not branch role.
+
+**Manual seed (via `/admin/`)** — if you prefer to practice admin UI:
 
 Start the dev server:
 
@@ -263,14 +316,13 @@ Create records in this order:
 - A user with **no** branch membership can log in but sees the “no branch access” page.
 - To test the branch picker, give **one user** memberships in **two** branches.
 
-### 6. Add sample products (CLI)
+### 6. Add sample products
 
-Products are not created in admin or on the phone — only via CLI:
+Products are managed in **`/admin/products/`** by warehouse staff (`is_staff`), or created by the seed script / CLI:
 
 ```bash
-source .venv/bin/activate
+./scripts/seed_dev_data.sh          # recommended — includes 3 products
 python manage.py add_product "Cement 50kg" 100 12.95
-python manage.py add_product "Steel Pipe 20mm" 50 8.75
 ```
 
 ### 7. Test the application
@@ -312,7 +364,9 @@ source .venv/bin/activate
 python manage.py runserver
 ```
 
-First-time only: steps 1–4 above, then admin seed (step 5), then CLI products (step 6).
+First-time or reset DB: steps 1–4 above, then `./scripts/seed_dev_data.sh`.
+
+Practice logins (after seed): `warehouse@centcompras.dev` (catalog admin), `admin.lisbon@centcompras.dev` (branch catalogue), password `devpass123`.
 
 ---
 
@@ -368,7 +422,7 @@ The following do **not** exist today. The [Project status](#project-status-hando
 
 ### Quality & operations
 
-- **Unit tests** — no real tests; stub files only
+- **Unit tests** — `products/tests.py` has catalog tests (7); `accounts/tests.py` and `branches/tests.py` still stubs
 - **Integration tests** — not started
 - Production deployment and HTTPS
 - PWA manifest / install prompt

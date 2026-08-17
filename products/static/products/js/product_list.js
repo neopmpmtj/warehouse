@@ -4,10 +4,36 @@ async function getProducts() {
     if (!response.ok) {
         throw new Error("Server unavailable");
     }
-    
-    const data = await response.json();
 
-    return data.products;
+    return response.json();
+}
+
+
+function formatCatalogTimestamp(isoTimestamp) {
+    if (!isoTimestamp) {
+        return "unknown time";
+    }
+
+    return new Date(isoTimestamp).toLocaleString();
+}
+
+
+function displayCatalogStatus(catalogUpdatedAt, fromCache) {
+    const statusElement = document.getElementById("catalog-status");
+
+    if (!statusElement) {
+        return;
+    }
+
+    const timestampText = formatCatalogTimestamp(catalogUpdatedAt);
+
+    if (fromCache) {
+        statusElement.textContent =
+            `Catalogue cached at ${timestampText}. Stock may be outdated until you reconnect.`;
+        return;
+    }
+
+    statusElement.textContent = `Catalogue updated at ${timestampText}.`;
 }
 
 
@@ -45,18 +71,29 @@ function displayProducts(products) {
 
 async function loadProducts() {
     try {
-        const products = await getProducts();
+        const data = await getProducts();
 
-        await saveProducts(products);
+        await saveProducts(data.products, data.catalog_updated_at);
 
-        displayProducts(products);
+        displayProducts(data.products);
+        displayCatalogStatus(data.catalog_updated_at, false);
 
         console.log("Products loaded from server");
 
     } catch (error) {
         const cachedProducts = await getCachedProducts();
+        const catalogUpdatedAt = await getSyncMetadata("catalog_updated_at");
 
         displayProducts(cachedProducts);
+
+        if (cachedProducts.length === 0) {
+            const statusElement = document.getElementById("catalog-status");
+            if (statusElement) {
+                statusElement.textContent = "No cached products available offline.";
+            }
+        } else {
+            displayCatalogStatus(catalogUpdatedAt, true);
+        }
 
         console.log("Products loaded from IndexedDB");
     }
@@ -66,14 +103,12 @@ async function loadProducts() {
 loadProducts();
 
 
-// When internet access returns, immediately try to refresh products.
 window.addEventListener("online", () => {
     console.log("Connection restored. Refreshing products...");
     loadProducts();
 });
 
 
-// Backup: retry every 30 seconds while the app is open.
 setInterval(() => {
     if (navigator.onLine) {
         loadProducts();

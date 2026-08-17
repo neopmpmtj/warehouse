@@ -4,6 +4,24 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 
 **Read [`README.md` → Project status (handoff)](README.md#project-status-handoff) first** for what is done vs pending.
 
+## Session handoff (August 2026)
+
+**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), catalog polish (API `catalog_updated_at`, duplicate code validation, audit reason, tests), dev seed script with **warehouse user**.
+
+**Not done:** `orders` app, offline order queue, integration tests for auth/branches, production OAuth/deployment.
+
+**Next:** Design order business rules, then implement `orders/` incrementally per [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md).
+
+## User roles (do not confuse these)
+
+| Role | Flag / model | Catalog | Orders (future) |
+|------|----------------|---------|-----------------|
+| Warehouse staff | `User.is_staff` | Manage via `/admin/products/` | N/A (central) |
+| Branch admin/manager/user | `BranchMembership.role` | Read-only at `/` | Per-branch permissions in `branches/permissions.py` |
+| Django superuser | `is_superuser` | Only if also `is_staff` | Site config in `/admin/` |
+
+Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branch admins, password `devpass123`.
+
 ## Current state (what exists)
 
 ### Apps
@@ -11,8 +29,8 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 | App | Purpose |
 |-----|---------|
 | `accounts` | Custom `User` (email login), login/logout |
-| `branches` | `Branch`, `BranchMembership`, `permissions.py`, `ActiveBranchMiddleware`, branch picker |
-| `products` | Catalogue model, service layer, API, CLI, offline web UI |
+| `branches` | `Branch`, `BranchMembership`, `permissions.py`, `ActiveBranchMiddleware`, branch picker, `seed_dev_data` command |
+| `products` | Catalogue model, service layer, API, CLI, offline web UI, staff admin, tests |
 | `logging_utils` | `get_logger("centcompras.<app>")`, rotating logs in `logs/` |
 
 ### Auth and tenancy
@@ -27,12 +45,14 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 ### Catalogue
 
 - **Product fields:** optional `internal_code`, `description`, `stock` (decimal), `price` (USD), `is_active`, timestamps
-- **Audit:** `ProductChangeLog` — who changed what (create / update / deactivate / reactivate)
+- **Audit:** `ProductChangeLog` — who changed what (create / update / deactivate / reactivate), optional `reason`
 - **Global catalogue** — no `branch_id` on `Product` (warehouse stock for all branches)
 - **Management:** warehouse staff via Django admin (`is_staff`); all mutations through `products/services.py`
-- **Branch access:** read-only — `GET /api/products/` returns active products only
+- **Branch access:** read-only — `GET /api/products/` returns active products only plus `catalog_updated_at`
+- **Validation:** duplicate non-empty `internal_code` rejected in services/admin
 - **CLI:** `add_product` for dev/bootstrap (audit user is null); optional `--internal-code`
-- **Offline:** Service Worker + IndexedDB (read-only catalogue cache)
+- **Offline:** Service Worker (`centcompras-shell-v4`) + IndexedDB (read-only catalogue cache)
+- **Tests:** `python manage.py test products` (7 tests)
 
 ### Logging
 
@@ -44,11 +64,14 @@ PostgreSQL is the source of truth. IndexedDB is a read-only local cache.
 
 ## Not implemented yet
 
-- `orders` app and order workflow (next phase)
-- Unit tests and integration tests (stub files only — defer until features stabilize)
+- `orders` app and order workflow (**next phase**)
+- Order business rules locked (stock timing, cart shape, cancel policy)
+- Integration tests for auth, branch middleware, offline catalogue
+- Tests for `accounts` and `branches` (stubs only)
 - Google OAuth, public signup, password reset
 - Offline order queue and sync
 - In-app branch switcher
+- Catalog extras: categories, vector/LLM search, bulk import
 
 Full list: [`README.md` → What is explicitly not built yet](README.md#what-is-explicitly-not-built-yet)
 
@@ -71,10 +94,16 @@ CLI / API / views  →  services.py  →  models.py  →  PostgreSQL
 source .venv/bin/activate
 cp config/settings.example.py config/settings.py   # first time only
 python manage.py migrate
-python manage.py createsuperuser
+python manage.py createsuperuser                 # optional site admin
+./scripts/seed_dev_data.sh                         # branches, users, warehouse, products
 python manage.py runserver
-python manage.py add_product "Description" 100 12.95
-python manage.py test   # no real tests yet
+python manage.py test products accounts branches
+```
+
+**Tests:** always use the project virtualenv — do not use system `python`/`python3`. Either activate first (`source .venv/bin/activate`) or invoke the venv interpreter directly:
+
+```bash
+.venv/bin/python manage.py test products accounts branches
 ```
 
 Use one hostname consistently for offline testing (`localhost` or `127.0.0.1`, not both).

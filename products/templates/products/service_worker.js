@@ -1,6 +1,6 @@
 {% load static %}
 
-const CACHE_NAME = "centcompras-shell-v3";
+const CACHE_NAME = "centcompras-shell-v5";
 
 const APP_SHELL = [
     "/",

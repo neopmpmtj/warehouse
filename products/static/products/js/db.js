@@ -35,7 +35,7 @@ function openDatabase() {
     });
 }
 
-async function saveProducts(products) {
+async function saveProducts(products, catalogUpdatedAt) {
     const db = await openDatabase();
 
     return new Promise((resolve, reject) => {
@@ -57,6 +57,15 @@ async function saveProducts(products) {
             key: "last_updated",
             value: new Date().toISOString()
         });
+
+        if (catalogUpdatedAt) {
+            metaStore.put({
+                key: "catalog_updated_at",
+                value: catalogUpdatedAt
+            });
+        } else {
+            metaStore.delete("catalog_updated_at");
+        }
 
         transaction.oncomplete = function () {
             resolve();
@@ -83,6 +92,28 @@ async function getCachedProducts() {
 
         request.onsuccess = function () {
             resolve(request.result);
+        };
+
+        request.onerror = function () {
+            reject(request.error);
+        };
+    });
+}
+
+async function getSyncMetadata(key) {
+    const db = await openDatabase();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(
+            META_STORE,
+            "readonly"
+        );
+
+        const store = transaction.objectStore(META_STORE);
+        const request = store.get(key);
+
+        request.onsuccess = function () {
+            resolve(request.result ? request.result.value : null);
         };
 
         request.onerror = function () {

@@ -963,6 +963,11 @@ Completed:
 [done] soft delete (is_active)
 [done] ProductChangeLog audit trail
 [done] service-layer create/update/deactivate/reactivate
+[done] catalog_updated_at in API and branch UI
+[done] duplicate internal_code validation
+[done] optional audit reason on ProductChangeLog
+[done] products/tests.py (7 tests)
+[done] scripts/seed_dev_data.sh + warehouse@centcompras.dev user
 ```
 
 Not completed:
@@ -972,9 +977,10 @@ Not completed:
 [todo] offline pending-order store
 [todo] order API
 [todo] synchronization/idempotency
-[todo] authentication/users
+[todo] integration tests (auth, branches, offline flow)
 [todo] deployment
 [todo] production security
+[todo] LLM/vector search on description (field ready)
 ```
 
 ---

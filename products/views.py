@@ -4,7 +4,7 @@ from django.shortcuts import render
 
 from logging_utils import get_logger
 
-from .services import get_products
+from .services import get_catalog_updated_at, get_products
 
 logger = get_logger("centcompras.products")
 
@@ -32,7 +32,15 @@ def product_list(request):
             "price": str(product.price),
         })
 
-    return JsonResponse({"products": data})
+    catalog_updated_at = get_catalog_updated_at()
+    response_payload = {
+        "products": data,
+        "catalog_updated_at": (
+            catalog_updated_at.isoformat() if catalog_updated_at else None
+        ),
+    }
+
+    return JsonResponse(response_payload)
 
 
 @login_required
