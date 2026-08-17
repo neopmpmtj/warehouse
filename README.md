@@ -99,7 +99,7 @@ The `products/README.md` file is a step-by-step record of how the catalogue and 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install django psycopg
+pip install -r requirements.txt
 ```
 
 ### 2. PostgreSQL
