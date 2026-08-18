@@ -32,11 +32,11 @@ def _decimal(value, field_name):
 
 
 def _get_order(order_id, for_update=False):
+    qs = PurchaseOrder.objects.select_related("supplier", "created_by", "approved_by")
     if for_update:
-        PurchaseOrder.objects.select_for_update().get(pk=order_id)
-    return PurchaseOrder.objects.select_related("supplier", "created_by", "approved_by").get(
-        pk=order_id,
-    )
+        # Lock only PurchaseOrder rows (approved_by is nullable — avoid outer-join FOR UPDATE).
+        qs = qs.select_for_update(of=("self",))
+    return qs.get(pk=order_id)
 
 
 def _line_received_total(po_line):

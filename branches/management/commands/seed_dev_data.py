@@ -20,11 +20,24 @@ from products.services import (
     link_product_supplier,
     reactivate_product,
     update_product_family,
+    update_product_prices,
     update_supplier,
 )
 
 
 DEFAULT_PASSWORD = "devpass123"
+
+# Dev catalogue price tiers: cost ≈ 60% of sell, wholesale ≈ 85% of sell (POs use cost).
+COST_RATIO = Decimal("0.60")
+WHOLESALE_RATIO = Decimal("0.85")
+TWO_PLACES = Decimal("0.01")
+
+
+def dev_prices_from_sell(sell):
+    sell_d = Decimal(str(sell)).quantize(TWO_PLACES)
+    cost = (sell_d * COST_RATIO).quantize(TWO_PLACES)
+    wholesale = (sell_d * WHOLESALE_RATIO).quantize(TWO_PLACES)
+    return cost, sell_d, wholesale
 
 BRANCHES = (
     "Lisbonbranch",
@@ -44,7 +57,8 @@ WAREHOUSE_USER = ("warehouse@centcompras.dev",)
 class Command(BaseCommand):
     help = (
         "Seed local dev data: branches, users, warehouse staff, product families, "
-        "suppliers, ~50 products, and supplier links (idempotent)."
+        "suppliers, ~50 products (cost / sell / wholesale), stock via ledger, "
+        "and supplier links (idempotent)."
     )
 
     def add_arguments(self, parser):
@@ -181,9 +195,22 @@ class Command(BaseCommand):
                     is_active,
                 ) = row
                 family = families_by_name[family_name]
+                cost, sell, wholesale = dev_prices_from_sell(price)
                 existing = Product.objects.filter(internal_code=internal_code).first()
                 if existing:
                     products_by_code[internal_code] = existing
+                    price_updates = {}
+                    if existing.cost <= 0:
+                        price_updates["cost"] = cost
+                    if existing.wholesale <= 0:
+                        price_updates["wholesale"] = wholesale
+                    if price_updates:
+                        update_product_prices(
+                            warehouse_user,
+                            existing,
+                            reason="seed_dev_data prices",
+                            **price_updates,
+                        )
                     self.stdout.write(
                         f"Exists product: {existing.internal_code} — {existing.description}"
                     )
@@ -193,11 +220,12 @@ class Command(BaseCommand):
                     user=warehouse_user,
                     family=family,
                     description=description,
-                    price=Decimal(price),
+                    price=sell,
+                    cost=cost,
+                    wholesale=wholesale,
                     unit_of_measure=unit,
                     internal_code=internal_code,
                     reorder_level=reorder_level,
-                    cost=Decimal(price) * Decimal("0.6"),
                     reason="seed_dev_data",
                 )
                 if Decimal(stock) > 0:
@@ -238,8 +266,12 @@ class Command(BaseCommand):
             self.stdout.write(f"  {email}  ->  {branch_name}")
         if warehouse_user:
             self.stdout.write("")
-            self.stdout.write("Warehouse product management (/manage/products/):")
-            self.stdout.write(f"  {warehouse_user.email}")
+            self.stdout.write("Warehouse staff consoles:")
+            self.stdout.write(f"  {warehouse_user.email}  ->  /manage/products/ (Prices drawer)")
+            self.stdout.write(f"  {warehouse_user.email}  ->  /manage/procurement/ (draft POs)")
+            self.stdout.write(
+                "  PO approval requires a Django superuser (createsuperuser), not warehouse staff."
+            )
         self.stdout.write("")
         self.stdout.write(
             "Note: branch admin role controls future order permissions per branch. "
