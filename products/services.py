@@ -37,6 +37,14 @@ class DeactivateReasonRequiredError(ValidationError):
         )
 
 
+class ReactivateReasonRequiredError(ValidationError):
+    def __init__(self):
+        super().__init__(
+            "A reason is required to activate a product.",
+            code="reactivate_reason_required",
+        )
+
+
 def _serialize_value(value):
     if isinstance(value, Decimal):
         return str(value)
@@ -115,7 +123,7 @@ def create_product(
         price=Decimal(str(price)),
         unit_of_measure=unit_of_measure,
         reorder_level=Decimal(str(reorder_level)),
-        is_active=True,
+        is_active=False,
     )
     _save_product(product, update_fields=None)
 
@@ -248,6 +256,10 @@ def reactivate_product(user, product, reason=""):
     product = Product.objects.select_for_update().get(pk=product.pk)
     if product.is_active:
         return product
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise ReactivateReasonRequiredError()
 
     product.is_active = True
     _save_product(product, update_fields=["is_active", "updated_at"])

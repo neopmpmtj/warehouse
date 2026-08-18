@@ -12,6 +12,7 @@ from products.permissions import can_manage_catalog
 from products.seed_catalog_data import PRODUCTS
 from products.services import (
     DeactivateReasonRequiredError,
+    ReactivateReasonRequiredError,
     DuplicateInternalCodeError,
     create_product,
     create_product_family,
@@ -38,7 +39,7 @@ class ProductTestCaseMixin:
     def create_test_family(self, name="Test Family"):
         return create_product_family(name)
 
-    def create_test_product(self, user, family=None, **kwargs):
+    def create_test_product(self, user, family=None, active=True, **kwargs):
         if family is None:
             family = self.family
         defaults = {
@@ -49,7 +50,11 @@ class ProductTestCaseMixin:
             "unit_of_measure": Product.UnitOfMeasure.PIECE,
         }
         defaults.update(kwargs)
-        return create_product(user, **defaults)
+        product = create_product(user, **defaults)
+        if active:
+            reactivate_product(user, product, reason="Genesis")
+            product.refresh_from_db()
+        return product
 
 
 class ProductServiceTests(ProductTestCaseMixin, TestCase):
@@ -62,8 +67,9 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
         self.family = self.create_test_family()
 
     def test_create_product_writes_audit_log(self):
-        product = self.create_test_product(
+        product = create_product(
             self.user,
+            family=self.family,
             description="Cement 50kg",
             stock="100",
             price="12.95",
@@ -73,7 +79,7 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
             reason="Initial stocktake",
         )
 
-        log = ProductChangeLog.objects.get(product=product)
+        log = product.change_logs.get(action=ProductChangeLog.Action.CREATED)
 
         self.assertEqual(log.action, ProductChangeLog.Action.CREATED)
         self.assertEqual(log.user, self.user)
@@ -81,6 +87,19 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
         self.assertEqual(log.changes["description"], "Cement 50kg")
         self.assertEqual(log.changes["family"]["name"], self.family.name)
         self.assertEqual(log.changes["unit_of_measure"], Product.UnitOfMeasure.KG)
+        self.assertFalse(product.is_active)
+
+    def test_create_product_starts_inactive(self):
+        product = create_product(
+            self.user,
+            family=self.family,
+            description="New item",
+            stock="1",
+            price="1.00",
+            unit_of_measure=Product.UnitOfMeasure.PIECE,
+        )
+
+        self.assertFalse(product.is_active)
 
     def test_update_product_detects_changes_after_in_memory_mutation(self):
         product = self.create_test_product(
@@ -250,6 +269,37 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
 
         product.refresh_from_db()
         self.assertTrue(product.is_active)
+
+    def test_reactivate_product_requires_reason(self):
+        product = create_product(
+            self.user,
+            family=self.family,
+            description="Needs activation reason",
+            stock="1",
+            price="1.00",
+            unit_of_measure=Product.UnitOfMeasure.PIECE,
+        )
+
+        with self.assertRaises(ReactivateReasonRequiredError):
+            reactivate_product(self.user, product)
+
+        with self.assertRaises(ReactivateReasonRequiredError):
+            reactivate_product(self.user, product, reason="   ")
+
+        product.refresh_from_db()
+        self.assertFalse(product.is_active)
+
+    def test_reactivate_already_active_does_not_require_reason(self):
+        product = self.create_test_product(self.user, description="Already active")
+
+        reactivate_product(self.user, product)
+
+        product.refresh_from_db()
+        self.assertTrue(product.is_active)
+        self.assertEqual(
+            product.change_logs.filter(action=ProductChangeLog.Action.REACTIVATED).count(),
+            1,
+        )
 
     def test_deactivate_already_inactive_does_not_require_reason(self):
         product = self.create_test_product(self.user, description="Already hidden")
@@ -702,8 +752,11 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
 
     def test_staff_manage_api_includes_inactive_products(self):
         active = self.create_test_product(self.staff_user, description="Visible")
-        inactive = self.create_test_product(self.staff_user, description="Hidden")
-        deactivate_product(self.staff_user, inactive, reason="Removed from catalogue")
+        inactive = self.create_test_product(
+            self.staff_user,
+            description="Hidden",
+            active=False,
+        )
         self.client.force_login(self.staff_user)
 
         response = self.client.get(reverse("manage_product_list"))
@@ -738,12 +791,22 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
         self.assertEqual(create_response.status_code, 200)
         created = create_response.json()["product"]
         product = Product.objects.get(pk=created["id"])
+        self.assertFalse(product.is_active)
         self.assertEqual(product.description, "Console cement")
         self.assertEqual(product.product_suppliers.count(), 1)
         self.assertEqual(
             product.change_logs.latest("created_at").reason,
             "Added from console",
         )
+
+        activate_response = self.client.post(
+            reverse("manage_product_reactivate", args=[product.id]),
+            data=json.dumps({"reason": "Genesis"}),
+            content_type="application/json",
+        )
+        self.assertEqual(activate_response.status_code, 200)
+        product.refresh_from_db()
+        self.assertTrue(product.is_active)
 
         update_response = self.client.patch(
             reverse("manage_product_detail", args=[product.id]),
@@ -841,6 +904,26 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
         self.assertEqual(payload["code"], "deactivate_reason_required")
         product.refresh_from_db()
         self.assertTrue(product.is_active)
+
+    def test_console_reactivate_without_reason_is_rejected(self):
+        product = self.create_test_product(
+            self.staff_user,
+            description="Inactive item",
+            active=False,
+        )
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_product_reactivate", args=[product.id]),
+            data=json.dumps({"reason": ""}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["code"], "reactivate_reason_required")
+        product.refresh_from_db()
+        self.assertFalse(product.is_active)
 
     def test_console_bulk_deactivate_without_reason_is_rejected(self):
         product = self.create_test_product(self.staff_user, description="To hide")

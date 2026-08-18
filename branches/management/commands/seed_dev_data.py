@@ -16,8 +16,8 @@ from products.services import (
     create_product,
     create_product_family,
     create_supplier,
-    deactivate_product,
     link_product_supplier,
+    reactivate_product,
     update_product_family,
     update_supplier,
 )
@@ -192,8 +192,8 @@ class Command(BaseCommand):
                     reorder_level=reorder_level,
                     reason="seed_dev_data",
                 )
-                if not is_active:
-                    deactivate_product(warehouse_user, product, reason="seed_dev_data")
+                if is_active:
+                    reactivate_product(warehouse_user, product, reason="Genesis")
                 products_by_code[internal_code] = product
                 self.stdout.write(
                     self.style.SUCCESS(

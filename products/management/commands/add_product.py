@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand, CommandError
 
 from products.models import Product, ProductFamily
-from products.services import create_product, get_product_families
+from products.services import create_product, get_product_families, reactivate_product
 
 
 class Command(BaseCommand):
@@ -34,6 +34,11 @@ class Command(BaseCommand):
             default="0",
             help="Reorder minimum stock threshold (default: 0)",
         )
+        parser.add_argument(
+            "--activate",
+            action="store_true",
+            help="Activate in the branch catalogue after create (reason: Genesis)",
+        )
 
     def handle(self, *args, **options):
         family_name = options["family"].strip()
@@ -57,8 +62,14 @@ class Command(BaseCommand):
             reorder_level=options["reorder_level"],
         )
 
+        if options["activate"]:
+            reactivate_product(user=None, product=product, reason="Genesis")
+            product.refresh_from_db()
+
+        status = "active" if product.is_active else "inactive"
         self.stdout.write(
             self.style.SUCCESS(
-                f"Product created: ID={product.id}, {product.internal_code} — {product.description}"
+                f"Product created ({status}): ID={product.id}, "
+                f"{product.internal_code} — {product.description}"
             )
         )

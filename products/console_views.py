@@ -12,6 +12,7 @@ from .models import Product
 from .permissions import staff_required
 from .services import (
     DeactivateReasonRequiredError,
+    ReactivateReasonRequiredError,
     DuplicateInternalCodeError,
     create_product,
     deactivate_product,
@@ -294,7 +295,7 @@ def _lifecycle(request, product_id, action):
         return _json_error("Request body must be valid JSON.")
     except Product.DoesNotExist:
         return _json_error("Product not found.", status=404)
-    except DeactivateReasonRequiredError as exc:
+    except (DeactivateReasonRequiredError, ReactivateReasonRequiredError) as exc:
         return _json_error(exc.messages[0], code=exc.code)
     except ValidationError as exc:
         return _json_error(exc.messages[0] if exc.messages else str(exc))
@@ -331,7 +332,7 @@ def manage_product_bulk(request):
     try:
         for product in products:
             action(request.user, product, reason=reason)
-    except DeactivateReasonRequiredError as exc:
+    except (DeactivateReasonRequiredError, ReactivateReasonRequiredError) as exc:
         return _json_error(exc.messages[0], code=exc.code)
 
     refreshed = (

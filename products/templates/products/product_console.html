@@ -82,15 +82,60 @@
                         <th class="col-check">
                             <input type="checkbox" id="select-all" aria-label="Select all">
                         </th>
-                        <th data-i18n="colCode">Code</th>
-                        <th data-i18n="colDescription">Description</th>
-                        <th data-i18n="colFamily">Family</th>
-                        <th data-i18n="colStock">Stock</th>
-                        <th data-i18n="colUnit">Unit</th>
-                        <th data-i18n="colReorder">Reorder</th>
-                        <th data-i18n="colPrice">Price</th>
-                        <th data-i18n="colSuppliers">Suppliers</th>
-                        <th data-i18n="colStatus">Status</th>
+                        <th class="th-sortable" data-sort="internal_code" data-i18n-col="colCode" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colCode">Code</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="description" data-i18n-col="colDescription" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colDescription">Description</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="family" data-i18n-col="colFamily" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colFamily">Family</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="stock" data-i18n-col="colStock" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colStock">Stock</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="unit_of_measure" data-i18n-col="colUnit" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colUnit">Unit</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="reorder_level" data-i18n-col="colReorder" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colReorder">Reorder</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="price" data-i18n-col="colPrice" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colPrice">Price</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="suppliers" data-i18n-col="colSuppliers" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colSuppliers">Suppliers</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
+                        <th class="th-sortable" data-sort="status" data-i18n-col="colStatus" aria-sort="none">
+                            <button type="button" class="sort-btn">
+                                <span data-i18n="colStatus">Status</span>
+                                <span class="sort-indicator" aria-hidden="true"></span>
+                            </button>
+                        </th>
                         <th data-i18n="colActions">Actions</th>
                     </tr>
                 </thead>
@@ -158,18 +203,19 @@
         </form>
     </aside>
 
-    <div id="reason-dialog-backdrop" class="backdrop dialog-backdrop" hidden></div>
-    <div id="reason-dialog" class="dialog" hidden>
-        <h2 data-i18n="deactivateReasonTitle">Reason required</h2>
-        <p data-i18n="deactivateReasonHelp">Explain why this product is leaving the catalogue.</p>
-        <label>
-            <span data-i18n="deactivateReasonLabel">Reason</span>
-            <textarea id="deactivate-reason-input" maxlength="255" rows="3" required></textarea>
+    <div id="lifecycle-dialog-backdrop" class="backdrop dialog-backdrop" hidden></div>
+    <div id="lifecycle-dialog" class="dialog" hidden>
+        <h2 id="lifecycle-dialog-title"></h2>
+        <p id="lifecycle-dialog-help" hidden></p>
+        <fieldset id="lifecycle-preset-list" class="lifecycle-presets"></fieldset>
+        <label id="lifecycle-custom-wrap" hidden>
+            <span id="lifecycle-custom-label" data-i18n="reasonOtherLabel">Other reason</span>
+            <textarea id="lifecycle-custom-input" maxlength="255" rows="3" data-i18n-placeholder="reasonOtherPlaceholder"></textarea>
         </label>
-        <p id="deactivate-reason-error" class="field-error" hidden></p>
+        <p id="lifecycle-reason-error" class="field-error" hidden></p>
         <div class="drawer-actions">
-            <button type="button" id="deactivate-reason-confirm" class="btn btn-danger" data-i18n="deactivate">Deactivate</button>
-            <button type="button" id="deactivate-reason-cancel" class="btn" data-i18n="cancel">Cancel</button>
+            <button type="button" id="lifecycle-confirm" class="btn btn-primary"></button>
+            <button type="button" id="lifecycle-cancel" class="btn" data-i18n="cancel">Cancel</button>
         </div>
     </div>
 

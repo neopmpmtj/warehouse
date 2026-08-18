@@ -9,6 +9,34 @@ const state = {
     units: [],
     selectedIds: new Set(),
     editingId: null,
+    sortKey: null,
+    sortDir: "asc",
+};
+
+const NUMERIC_SORT_KEYS = new Set(["stock", "reorder_level", "price"]);
+
+const LIFECYCLE_REASON = {
+    GENESIS: "Genesis",
+    IN_STOCK: "In stock",
+    RESTOCKED: "Restocked",
+    TEMP_UNAVAILABLE: "Temporarily unavailable",
+    DISCONTINUED: "No longer commercialized",
+};
+
+const LIFECYCLE_OTHER = "__other__";
+
+const LIFECYCLE_PRESETS = {
+    genesis: [{ value: LIFECYCLE_REASON.GENESIS, labelKey: "reasonGenesis" }],
+    activate: [
+        { value: LIFECYCLE_REASON.IN_STOCK, labelKey: "reasonInStock" },
+        { value: LIFECYCLE_REASON.RESTOCKED, labelKey: "reasonRestocked" },
+        { value: LIFECYCLE_OTHER, labelKey: "reasonOther" },
+    ],
+    deactivate: [
+        { value: LIFECYCLE_REASON.TEMP_UNAVAILABLE, labelKey: "reasonTempUnavailable" },
+        { value: LIFECYCLE_REASON.DISCONTINUED, labelKey: "reasonDiscontinued" },
+        { value: LIFECYCLE_OTHER, labelKey: "reasonOther" },
+    ],
 };
 
 function currentLang() {
@@ -148,6 +176,100 @@ function unitLabel(value) {
     return t(`unit.${value}`);
 }
 
+function supplierSortKey(product) {
+    if (!product.suppliers.length) {
+        return "";
+    }
+    return product.suppliers.map((item) => item.name).join(", ");
+}
+
+function sortValue(product, key) {
+    switch (key) {
+        case "internal_code":
+            return product.internal_code || "";
+        case "description":
+            return product.description;
+        case "family":
+            return product.family.name;
+        case "stock":
+            return Number(product.stock);
+        case "unit_of_measure":
+            return unitLabel(product.unit_of_measure);
+        case "reorder_level":
+            return Number(product.reorder_level);
+        case "price":
+            return Number(product.price);
+        case "suppliers":
+            return supplierSortKey(product);
+        case "status":
+            return product.is_active ? t("active") : t("inactive");
+        default:
+            return product.id;
+    }
+}
+
+function compareProducts(left, right, key, dir) {
+    const leftVal = sortValue(left, key);
+    const rightVal = sortValue(right, key);
+    let cmp = 0;
+    if (NUMERIC_SORT_KEYS.has(key)) {
+        cmp = leftVal - rightVal;
+    } else {
+        cmp = String(leftVal).localeCompare(String(rightVal), currentLang(), {
+            sensitivity: "base",
+        });
+    }
+    if (cmp === 0) {
+        cmp = left.id - right.id;
+    }
+    return dir === "desc" ? -cmp : cmp;
+}
+
+function sortedProducts(rows) {
+    if (!state.sortKey) {
+        return [...rows].sort((left, right) => left.id - right.id);
+    }
+    return [...rows].sort((left, right) => compareProducts(left, right, state.sortKey, state.sortDir));
+}
+
+function updateSortHeaders() {
+    document.querySelectorAll("th[data-sort]").forEach((header) => {
+        const key = header.getAttribute("data-sort");
+        const columnKey = header.getAttribute("data-i18n-col");
+        const columnLabel = columnKey ? t(columnKey) : key;
+        const button = header.querySelector(".sort-btn");
+        const indicator = header.querySelector(".sort-indicator");
+        if (!button || !indicator) {
+            return;
+        }
+        if (state.sortKey === key) {
+            header.setAttribute("aria-sort", state.sortDir === "asc" ? "ascending" : "descending");
+            header.classList.add("is-sorted");
+            indicator.textContent = state.sortDir === "asc" ? "▲" : "▼";
+            button.setAttribute(
+                "aria-label",
+                t(state.sortDir === "asc" ? "sortActiveAsc" : "sortActiveDesc", {
+                    column: columnLabel,
+                })
+            );
+            return;
+        }
+        header.setAttribute("aria-sort", "none");
+        header.classList.remove("is-sorted");
+        indicator.textContent = "";
+        button.setAttribute("aria-label", t("sortBy", { column: columnLabel }));
+    });
+}
+
+function toggleSort(key) {
+    if (state.sortKey === key) {
+        state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        return;
+    }
+    state.sortKey = key;
+    state.sortDir = "asc";
+}
+
 function fillSelect(select, options, placeholder) {
     const current = select.value;
     select.replaceChildren();
@@ -206,7 +328,7 @@ function fillFormLookups() {
 
 function renderTable() {
     const body = document.getElementById("product-table-body");
-    const rows = filteredProducts();
+    const rows = sortedProducts(filteredProducts());
     body.replaceChildren();
 
     document.getElementById("result-count").textContent = t("showingCount", {
@@ -222,6 +344,7 @@ function renderTable() {
         cell.textContent = state.products.length === 0 ? t("empty") : t("noMatch");
         row.appendChild(cell);
         body.appendChild(row);
+        updateSortHeaders();
         return;
     }
 
@@ -327,6 +450,7 @@ function renderTable() {
     const visibleIds = rows.map((product) => product.id);
     const selectAll = document.getElementById("select-all");
     selectAll.checked = visibleIds.length > 0 && visibleIds.every((id) => state.selectedIds.has(id));
+    updateSortHeaders();
 }
 
 function replaceProduct(product) {
@@ -486,8 +610,19 @@ async function saveProduct(event) {
                 body: JSON.stringify(payload),
             });
             replaceProduct(data.product);
-            showBanner(t("created"));
             closeDrawer();
+            renderTable();
+            const reason = await askLifecycleReason("genesis");
+            if (reason === null) {
+                showBanner(t("createdInactive"));
+                return;
+            }
+            const activated = await api(`${API_ROOT}${data.product.id}/reactivate/`, {
+                method: "POST",
+                body: JSON.stringify({ reason }),
+            });
+            replaceProduct(activated.product);
+            showBanner(t("activated"));
         }
         renderTable();
         refreshDrawerLabels();
@@ -496,20 +631,87 @@ async function saveProduct(event) {
     }
 }
 
-async function askDeactivateReason() {
-    return new Promise((resolve) => {
-        const backdrop = document.getElementById("reason-dialog-backdrop");
-        const dialog = document.getElementById("reason-dialog");
-        const input = document.getElementById("deactivate-reason-input");
-        const error = document.getElementById("deactivate-reason-error");
-        const confirmButton = document.getElementById("deactivate-reason-confirm");
-        const cancelButton = document.getElementById("deactivate-reason-cancel");
+function lifecycleDialogConfig(mode) {
+    if (mode === "genesis") {
+        return {
+            titleKey: "lifecycleGenesisTitle",
+            helpKey: "genesisHelp",
+            confirmKey: "genesisConfirm",
+            confirmClass: "btn btn-primary",
+            errorKey: "reactivate_reason_required",
+        };
+    }
+    if (mode === "activate") {
+        return {
+            titleKey: "lifecycleActivateTitle",
+            helpKey: null,
+            confirmKey: "activate",
+            confirmClass: "btn btn-primary",
+            errorKey: "reactivate_reason_required",
+        };
+    }
+    return {
+        titleKey: "lifecycleDeactivateTitle",
+        helpKey: null,
+        confirmKey: "deactivate",
+        confirmClass: "btn btn-danger",
+        errorKey: "deactivate_reason_required",
+    };
+}
 
-        input.value = "";
+function askLifecycleReason(mode) {
+    return new Promise((resolve) => {
+        const config = lifecycleDialogConfig(mode);
+        const backdrop = document.getElementById("lifecycle-dialog-backdrop");
+        const dialog = document.getElementById("lifecycle-dialog");
+        const title = document.getElementById("lifecycle-dialog-title");
+        const help = document.getElementById("lifecycle-dialog-help");
+        const presetList = document.getElementById("lifecycle-preset-list");
+        const customWrap = document.getElementById("lifecycle-custom-wrap");
+        const customInput = document.getElementById("lifecycle-custom-input");
+        const error = document.getElementById("lifecycle-reason-error");
+        const confirmButton = document.getElementById("lifecycle-confirm");
+        const cancelButton = document.getElementById("lifecycle-cancel");
+        const presets = LIFECYCLE_PRESETS[mode];
+
+        title.textContent = t(config.titleKey);
+        if (config.helpKey) {
+            help.textContent = t(config.helpKey);
+            help.hidden = false;
+        } else {
+            help.hidden = true;
+        }
+        confirmButton.textContent = t(config.confirmKey);
+        confirmButton.className = config.confirmClass;
+        customInput.value = "";
         error.hidden = true;
-        backdrop.hidden = false;
-        dialog.hidden = false;
-        input.focus();
+        customWrap.hidden = true;
+
+        presetList.replaceChildren();
+        presets.forEach((preset, index) => {
+            const label = document.createElement("label");
+            const input = document.createElement("input");
+            input.type = "radio";
+            input.name = "lifecycle-preset";
+            input.value = preset.value;
+            input.checked = index === 0;
+            const text = document.createElement("span");
+            text.textContent = t(preset.labelKey);
+            label.append(input, text);
+            presetList.appendChild(label);
+        });
+
+        function selectedValue() {
+            const selected = presetList.querySelector('input[name="lifecycle-preset"]:checked');
+            return selected ? selected.value : "";
+        }
+
+        function syncCustomField() {
+            customWrap.hidden = selectedValue() !== LIFECYCLE_OTHER;
+            if (!customWrap.hidden) {
+                customInput.focus();
+            }
+        }
 
         function finish(value) {
             backdrop.hidden = true;
@@ -517,19 +719,30 @@ async function askDeactivateReason() {
             confirmButton.removeEventListener("click", onConfirm);
             cancelButton.removeEventListener("click", onCancel);
             backdrop.removeEventListener("click", onCancel);
-            input.removeEventListener("keydown", onKey);
+            customInput.removeEventListener("keydown", onKey);
+            presetList.removeEventListener("change", syncCustomField);
             resolve(value);
         }
 
         function onConfirm() {
-            const reason = input.value.trim();
-            if (!reason) {
-                error.textContent = t("deactivate_reason_required");
+            const value = selectedValue();
+            if (!value) {
+                error.textContent = t(config.errorKey);
                 error.hidden = false;
-                input.focus();
                 return;
             }
-            finish(reason);
+            if (value === LIFECYCLE_OTHER) {
+                const custom = customInput.value.trim();
+                if (!custom) {
+                    error.textContent = t(config.errorKey);
+                    error.hidden = false;
+                    customInput.focus();
+                    return;
+                }
+                finish(custom);
+                return;
+            }
+            finish(value);
         }
 
         function onCancel() {
@@ -546,38 +759,27 @@ async function askDeactivateReason() {
             }
         }
 
+        presetList.addEventListener("change", syncCustomField);
         confirmButton.addEventListener("click", onConfirm);
         cancelButton.addEventListener("click", onCancel);
         backdrop.addEventListener("click", onCancel);
-        input.addEventListener("keydown", onKey);
+        customInput.addEventListener("keydown", onKey);
+        backdrop.hidden = false;
+        dialog.hidden = false;
+        syncCustomField();
+        if (customWrap.hidden) {
+            confirmButton.focus();
+        }
     });
-}
-
-function reasonFromOpenDrawer(product) {
-    const drawerOpen = !document.getElementById("drawer").hidden;
-    const editingThis = Boolean(product) && drawerOpen && state.editingId === product.id;
-    if (!editingThis) {
-        return "";
-    }
-    return document.getElementById("field-reason").value.trim();
-}
-
-async function resolveDeactivateReason(product) {
-    const fromField = reasonFromOpenDrawer(product);
-    if (fromField) {
-        return fromField;
-    }
-    return askDeactivateReason();
 }
 
 async function toggleLifecycle(product) {
     clearBanner();
-    let reason = reasonFromOpenDrawer(product);
-    if (product.is_active) {
-        reason = await resolveDeactivateReason(product);
-        if (reason === null) {
-            return;
-        }
+    const reason = product.is_active
+        ? await askLifecycleReason("deactivate")
+        : await askLifecycleReason("activate");
+    if (reason === null) {
+        return;
     }
     const path = product.is_active
         ? `${API_ROOT}${product.id}/deactivate/`
@@ -612,12 +814,14 @@ async function applyBulk() {
         showBanner(t("selectRows"), true);
         return;
     }
-    let reason = document.getElementById("field-reason").value;
+    let reason = "";
     if (action === "deactivate") {
-        reason = await askDeactivateReason();
-        if (reason === null) {
-            return;
-        }
+        reason = await askLifecycleReason("deactivate");
+    } else {
+        reason = await askLifecycleReason("activate");
+    }
+    if (reason === null) {
+        return;
     }
     try {
         const data = await api(`${API_ROOT}bulk/`, {
@@ -681,6 +885,19 @@ function bindEvents() {
             toggleLifecycle(product);
         }
     });
+    const sortableHead = document.querySelector(".grid thead");
+    if (sortableHead) {
+        sortableHead.addEventListener("click", (event) => {
+            const button = event.target.closest("th[data-sort] .sort-btn");
+            if (!button) {
+                return;
+            }
+            event.preventDefault();
+            const key = button.closest("th").getAttribute("data-sort");
+            toggleSort(key);
+            renderTable();
+        });
+    }
 }
 
 async function init() {
