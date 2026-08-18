@@ -1,6 +1,6 @@
 # CentCompras — Agent instructions
 
-Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branches**. Branch staff browse a product catalogue from a phone browser. **Inbound stock** (supplier purchases → product quantity) is the next product-side design; **branch orders** wait until stock can be received.
+Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branches**. Branch staff browse a product catalogue from a phone browser. **Inbound stock** is implemented via `procurement` (PO → superuser approve → receipt). **Branch orders** are the next business phase.
 
 **Read [`README.md` → Project status (handoff)](README.md#project-status-handoff) first** for what is done vs pending.
 
@@ -8,21 +8,21 @@ Staff product console (this phase): [`docs/product-console-session-2026-08-18.md
 
 ## Session handoff (August 2026)
 
-**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), staff product console (`/manage/products/` — sort, inactive-by-default create, family/supplier drawers), family and supplier PostgreSQL audit logs, catalog polish, dev seed script with **warehouse user**. Handoff docs synced 18 August 2026 (`aux_instructions.md`, tenancy preamble, this file, root README).
+**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), staff product console (`/manage/products/` — sort, inactive-by-default create, family/supplier/prices drawers), family and supplier PostgreSQL audit logs, catalog polish, dev seed script with **warehouse user**, **procurement** (PO + receipt + stock ledger), product `cost`/`wholesale` + Prices drawer.
 
-**Not done:** inbound stock / procurement app, `orders` app, offline order queue, shared page chrome, branch phone UX, console polish, integration tests for auth/branches, production OAuth/deployment.
+**Not done:** `orders` app, offline order queue, shared page chrome, branch phone UX, console polish, integration tests for auth/branches, production OAuth/deployment.
 
-**Next:** Design how a supplier purchase becomes `Product.stock`. Do **not** implement `orders/` or the tenancy-doc Order stub. Hold shared chrome, `/` restyle, and console polish for dedicated sessions.
+**Next:** Design and implement branch **orders** per [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md). Do **not** implement the tenancy-doc Order stub (`item_name`). Hold shared chrome, `/` restyle, and console polish for dedicated sessions.
 
-**Stock today:** `Product.stock` is still typed in the staff console. That is not a locked design.
+**PO approval:** only `is_superuser` (seeded `warehouse@centcompras.dev` is staff, not superuser — use `createsuperuser` to practice approve → receive).
 
 ## User roles (do not confuse these)
 
 | Role | Flag / model | Catalog | Orders (future) |
 |------|----------------|---------|-----------------|
-| Warehouse staff | `User.is_staff` | Manage via `/manage/products/` (and `/admin/products/`); stock is still typed on the product | N/A (central) |
-| Branch admin/manager/user | `BranchMembership.role` | Read-only at `/` | Per-branch permissions in `branches/permissions.py` (after inbound stock) |
-| Django superuser | `is_superuser` | Only if also `is_staff` | Site config in `/admin/` |
+| Warehouse staff | `User.is_staff` | Manage via `/manage/products/` and `/manage/procurement/` (and admin); stock read-only on product form | N/A (central) |
+| Branch admin/manager/user | `BranchMembership.role` | Read-only at `/` | Per-branch permissions in `branches/permissions.py` (future) |
+| Django superuser | `is_superuser` | Catalogue if also `is_staff` | **Approve purchase orders**; site config in `/admin/` |
 
 Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branch admins, password `devpass123`.
 
@@ -34,7 +34,8 @@ Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branc
 |-----|---------|
 | `accounts` | Custom `User` (email login), login/logout |
 | `branches` | `Branch`, `BranchMembership`, `permissions.py`, `ActiveBranchMiddleware`, branch picker, `seed_dev_data` command |
-| `products` | Catalogue model, service layer, API, CLI, offline web UI, staff admin, staff console, tests |
+| `products` | Catalogue model, service layer, API, CLI, offline web UI, staff admin, staff console, stock ledger, tests |
+| `procurement` | Purchase orders, goods receipts, staff console at `/manage/procurement/`, tests |
 | `logging_utils` | `get_logger("centcompras.<app>")`, rotating logs in `logs/` |
 
 ### Auth and tenancy
@@ -48,16 +49,19 @@ Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branc
 
 ### Catalogue
 
-- **Product fields:** family, optional `internal_code`, `description`, `stock` (still console-editable), `price`, `unit_of_measure`, `reorder_level`, `is_active` (new products start inactive), timestamps; suppliers via `ProductSupplier`
+- **Product fields:** family, optional `internal_code`, `description`, `stock` (read-only in console; receipts only), `cost`, `price` (sell), `wholesale`, `unit_of_measure`, `reorder_level`, `is_active` (new products start inactive), timestamps; suppliers via `ProductSupplier`
+- **Prices drawer** on `/manage/products/` edits cost / sell / wholesale (not on main product form)
+- **Stock ledger:** `StockMovement`; `apply_stock_change` is the only stock write; new products start at stock 0
+- **Purchase-price history:** approved `PurchaseOrderLine.unit_cost` (frozen at superuser approve)
 - **Audit:** `ProductChangeLog`, `FamilyChangeLog`, `SupplierChangeLog` — who changed what (create / update / deactivate / reactivate). Product lifecycle reasons required; family/supplier deactivate is confirm-only
 - **Names:** family and supplier names are case-insensitive unique; the console does not rename them
 - **Global catalogue** — no `branch_id` on `Product` (warehouse stock for all branches)
 - **Management:** warehouse staff via `/manage/products/` (products, families, suppliers) and Django admin (`is_staff`); all mutations through `products/services.py`
 - **Branch access:** read-only — `GET /api/products/` returns active products only plus `catalog_updated_at`
 - **Validation:** duplicate non-empty `internal_code` rejected in services/admin
-- **CLI:** `add_product` for dev/bootstrap (audit user is null); optional `--internal-code`
+- **CLI:** `add_product` for dev/bootstrap (audit user is null); optional `--internal-code`, `--stock` (ledger), `--cost`, `--wholesale`
 - **Offline:** Service Worker (`centcompras-shell-v5`) + IndexedDB (read-only catalogue cache)
-- **Tests:** `.venv/bin/python manage.py test products`
+- **Tests:** `.venv/bin/python manage.py test products procurement`
 
 ### Logging
 
@@ -69,8 +73,7 @@ PostgreSQL is the source of truth. IndexedDB is a read-only local cache.
 
 ## Not implemented yet
 
-- Inbound stock / procurement (supplier receipt → `Product.stock`) — **next design**
-- `orders` app and order workflow (**after** inbound stock)
+- `orders` app and order workflow (**next phase**)
 - Order business rules not locked (stock timing, cart shape, cancel policy)
 - Shared page chrome; branch phone-catalogue UX; staff console polish (dedicated sessions)
 - Integration tests for auth, branch middleware, offline catalogue

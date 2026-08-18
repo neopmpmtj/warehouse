@@ -42,6 +42,11 @@
         </div>
     </header>
 
+    <nav class="staff-nav" aria-label="Staff sections">
+        <a href="{% url 'product_console' %}" class="staff-nav-link is-active" data-i18n="navProducts">Products</a>
+        <a href="{% url 'procurement_console' %}" class="staff-nav-link" data-i18n="navPurchases">Purchases</a>
+    </nav>
+
     <main class="page">
         <section class="toolbar" aria-label="Filters">
             <input
@@ -71,6 +76,7 @@
             <button type="button" id="bulk-apply" class="btn" data-i18n="apply">Apply</button>
             <button type="button" id="manage-families" class="btn" data-i18n="manageFamilies">Families</button>
             <button type="button" id="manage-suppliers" class="btn" data-i18n="manageSuppliers">Suppliers</button>
+            <button type="button" id="manage-prices" class="btn" data-i18n="managePrices">Prices</button>
             <button type="button" id="new-product" class="btn btn-primary" data-i18n="newProduct">New product</button>
         </section>
 
@@ -172,7 +178,7 @@
             <div class="field-row">
                 <label>
                     <span data-i18n="stock">Stock</span>
-                    <input type="number" id="field-stock" step="0.001" required>
+                    <input type="text" id="field-stock" readonly>
                 </label>
                 <label>
                     <span data-i18n="unit">Unit</span>
@@ -189,6 +195,7 @@
                     <input type="number" id="field-price" step="0.01" required>
                 </label>
             </div>
+            <p class="drawer-help" data-i18n="priceDrawerHint">Cost and wholesale are edited in the Prices drawer.</p>
             <fieldset>
                 <legend class="legend-with-action">
                     <span data-i18n="suppliers">Suppliers</span>
@@ -240,6 +247,34 @@
                 <p id="family-history-hint" class="drawer-help" data-i18n="selectHistory">Choose History on a row to see who created or changed it.</p>
                 <ol id="family-history-list"></ol>
             </section>
+        </div>
+    </aside>
+
+    <div id="prices-drawer-backdrop" class="backdrop" hidden></div>
+    <aside id="prices-drawer" class="drawer" hidden>
+        <div class="drawer-head">
+            <h2 data-i18n="pricesDrawerTitle">Prices</h2>
+            <button type="button" id="prices-drawer-close" class="btn btn-ghost" data-i18n="close">Close</button>
+        </div>
+        <div class="drawer-body">
+            <p class="drawer-help" data-i18n="pricesDrawerHelp">Set cost, sell, and wholesale per product. Purchase orders use cost.</p>
+            <div class="drawer-actions">
+                <button type="button" id="prices-save" class="btn btn-primary" data-i18n="save">Save</button>
+            </div>
+            <div class="table-wrap family-table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th data-i18n="colCode">Code</th>
+                            <th data-i18n="colDescription">Description</th>
+                            <th data-i18n="colCost">Cost</th>
+                            <th data-i18n="colSell">Sell</th>
+                            <th data-i18n="colWholesale">Wholesale</th>
+                        </tr>
+                    </thead>
+                    <tbody id="prices-table-body"></tbody>
+                </table>
+            </div>
         </div>
     </aside>
 

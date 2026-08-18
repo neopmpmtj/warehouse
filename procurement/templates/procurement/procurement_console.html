@@ -1,0 +1,131 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Purchases — CentCompras</title>
+    <script>
+        (function () {
+            var theme = localStorage.getItem("cc-theme") || "light";
+            var lang = localStorage.getItem("cc-lang") || "en";
+            document.documentElement.setAttribute("data-theme", theme);
+            document.documentElement.setAttribute("lang", lang);
+        })();
+    </script>
+    <link rel="stylesheet" href="{% static 'products/css/console.css' %}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-title">
+            <p class="eyebrow" data-i18n="eyebrow">CentCompras</p>
+            <h1 data-i18n="procurementTitle">Purchases</h1>
+        </div>
+        <div class="topbar-actions">
+            <p class="user-line">
+                <span data-i18n="signedInAs">Signed in as</span>
+                <strong>{{ user.email }}</strong>
+            </p>
+            <label class="control-inline">
+                <span data-i18n="language">Language</span>
+                <select id="language-select" aria-label="Language">
+                    <option value="en">English</option>
+                    <option value="pt-PT">Português</option>
+                </select>
+            </label>
+            <button type="button" id="theme-toggle" class="btn btn-ghost"></button>
+            <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-ghost" data-i18n="signOut">Sign out</button>
+            </form>
+        </div>
+    </header>
+
+    <nav class="staff-nav" aria-label="Staff sections">
+        <a href="{% url 'product_console' %}" class="staff-nav-link" data-i18n="navProducts">Products</a>
+        <a href="{% url 'procurement_console' %}" class="staff-nav-link is-active" data-i18n="navPurchases">Purchases</a>
+    </nav>
+
+    <main class="page">
+        <section class="toolbar">
+            <select id="status-filter">
+                <option value="all" data-i18n="allStatuses">All statuses</option>
+                <option value="draft" data-i18n="statusDraft">Draft</option>
+                <option value="pending_approval" data-i18n="statusPending">Pending approval</option>
+                <option value="approved" data-i18n="statusApproved">Approved</option>
+                <option value="cancelled" data-i18n="statusCancelled">Cancelled</option>
+            </select>
+            <div class="toolbar-spacer"></div>
+            <button type="button" id="new-order" class="btn btn-primary" data-i18n="newOrder">New purchase order</button>
+        </section>
+
+        <p id="banner" class="banner" hidden></p>
+
+        <div class="table-wrap">
+            <table class="grid">
+                <thead>
+                    <tr>
+                        <th data-i18n="colPoId">PO</th>
+                        <th data-i18n="supplierName">Supplier</th>
+                        <th data-i18n="colStatus">Status</th>
+                        <th data-i18n="colCreated">Created</th>
+                        <th data-i18n="colActions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="order-table-body"></tbody>
+            </table>
+        </div>
+    </main>
+
+    <div id="drawer-backdrop" class="backdrop" hidden></div>
+    <aside id="drawer" class="drawer" hidden>
+        <div class="drawer-head">
+            <h2 id="drawer-title"></h2>
+            <button type="button" id="drawer-close" class="btn btn-ghost" data-i18n="close">Close</button>
+        </div>
+        <div class="drawer-body">
+            <label>
+                <span data-i18n="supplierName">Supplier</span>
+                <select id="field-supplier" required></select>
+            </label>
+            <label>
+                <span data-i18n="notes">Notes</span>
+                <textarea id="field-notes" rows="2"></textarea>
+            </label>
+            <div class="drawer-actions" id="drawer-actions-top"></div>
+            <h3 data-i18n="linesTitle">Lines</h3>
+            <div class="table-wrap family-table-wrap">
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th data-i18n="colProduct">Product</th>
+                            <th data-i18n="colQty">Qty</th>
+                            <th data-i18n="colCost">Unit cost</th>
+                            <th data-i18n="colReceived">Received</th>
+                            <th data-i18n="colOutstanding">Outstanding</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="line-table-body"></tbody>
+                </table>
+            </div>
+            <div class="drawer-actions" id="drawer-actions-bottom"></div>
+        </div>
+    </aside>
+
+    <div id="receive-dialog-backdrop" class="backdrop dialog-backdrop" hidden></div>
+    <div id="receive-dialog" class="dialog dialog-form" hidden>
+        <h2 data-i18n="receiveTitle">Receive goods</h2>
+        <div id="receive-lines"></div>
+        <div class="drawer-actions">
+            <button type="button" id="receive-confirm" class="btn btn-primary" data-i18n="receiveConfirm">Confirm receipt</button>
+            <button type="button" id="receive-cancel" class="btn" data-i18n="cancel">Cancel</button>
+        </div>
+    </div>
+
+    <script src="{% static 'products/js/console_i18n.js' %}"></script>
+    <script src="{% static 'procurement/js/procurement_i18n.js' %}"></script>
+    <script src="{% static 'procurement/js/procurement.js' %}"></script>
+</body>
+</html>

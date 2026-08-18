@@ -42,6 +42,8 @@ from products.services import (
     unlink_product_supplier,
     update_product,
     update_product_family,
+    update_product_prices,
+    apply_stock_change,
     update_supplier,
     validate_internal_code_available,
 )
@@ -51,18 +53,21 @@ class ProductTestCaseMixin:
     def create_test_family(self, name="Test Family"):
         return create_product_family(name)
 
-    def create_test_product(self, user, family=None, active=True, **kwargs):
+    def create_test_product(self, user, family=None, active=True, stock="1", **kwargs):
         if family is None:
             family = self.family
         defaults = {
             "family": family,
             "description": "Test product",
-            "stock": "1",
+            "cost": "0.50",
             "price": "1.00",
             "unit_of_measure": Product.UnitOfMeasure.PIECE,
         }
         defaults.update(kwargs)
         product = create_product(user, **defaults)
+        if stock and stock != "0":
+            apply_stock_change(user, product, stock, reason="test setup")
+            product.refresh_from_db()
         if active:
             reactivate_product(user, product, reason="Genesis")
             product.refresh_from_db()
@@ -83,7 +88,7 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
             self.user,
             family=self.family,
             description="Cement 50kg",
-            stock="100",
+            cost="8.00",
             price="12.95",
             internal_code="CEM-50",
             unit_of_measure=Product.UnitOfMeasure.KG,
@@ -106,7 +111,6 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
             self.user,
             family=self.family,
             description="New item",
-            stock="1",
             price="1.00",
             unit_of_measure=Product.UnitOfMeasure.PIECE,
         )
@@ -230,11 +234,7 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
         first = self.create_test_product(self.user, description="First")
         second = self.create_test_product(self.user, description="Second")
 
-        update_product(
-            self.user,
-            first,
-            stock=Decimal("5"),
-        )
+        apply_stock_change(self.user, first, Decimal("5"), reason="Stocktake adjustment")
         second.refresh_from_db()
         first.refresh_from_db()
 
@@ -287,7 +287,6 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
             self.user,
             family=self.family,
             description="Needs activation reason",
-            stock="1",
             price="1.00",
             unit_of_measure=Product.UnitOfMeasure.PIECE,
         )
@@ -996,7 +995,6 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
             data=json.dumps({
                 "family_id": self.family.id,
                 "description": "Console cement",
-                "stock": "12",
                 "price": "9.50",
                 "unit_of_measure": Product.UnitOfMeasure.KG,
                 "internal_code": "CON-1",
@@ -1012,6 +1010,7 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
         product = Product.objects.get(pk=created["id"])
         self.assertFalse(product.is_active)
         self.assertEqual(product.description, "Console cement")
+        self.assertEqual(product.stock, Decimal("0"))
         self.assertEqual(product.product_suppliers.count(), 1)
         self.assertEqual(
             product.change_logs.latest("created_at").reason,
@@ -1054,7 +1053,6 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
             data=json.dumps({
                 "family_id": self.family.id,
                 "description": "Should not persist",
-                "stock": "1",
                 "price": "1.00",
                 "unit_of_measure": Product.UnitOfMeasure.PIECE,
                 "internal_code": "CON-FAIL",
@@ -1258,7 +1256,6 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
             data=json.dumps({
                 "family_id": family_id,
                 "description": "Family-first item",
-                "stock": "1",
                 "price": "2.00",
                 "unit_of_measure": Product.UnitOfMeasure.PIECE,
             }),
@@ -1410,7 +1407,6 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
             data=json.dumps({
                 "family_id": self.family.id,
                 "description": "Optional supplier item",
-                "stock": "1",
                 "price": "2.00",
                 "unit_of_measure": Product.UnitOfMeasure.PIECE,
                 "supplier_ids": [supplier_id],

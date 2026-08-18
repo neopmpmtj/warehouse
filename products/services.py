@@ -13,6 +13,7 @@ from .models import (
     ProductChangeLog,
     ProductFamily,
     ProductSupplier,
+    StockMovement,
     Supplier,
     SupplierChangeLog,
 )
@@ -23,11 +24,12 @@ UPDATABLE_FIELDS = (
     "family",
     "internal_code",
     "description",
-    "stock",
     "price",
     "unit_of_measure",
     "reorder_level",
 )
+
+PRICE_FIELDS = ("cost", "price", "wholesale")
 
 
 class DuplicateInternalCodeError(ValidationError):
@@ -94,6 +96,11 @@ class InvalidSupplierEmailError(ValidationError):
         )
 
 
+class StockChangeError(ValidationError):
+    def __init__(self, message, code="stock_change_error"):
+        super().__init__(message, code=code)
+
+
 def _serialize_value(value):
     if isinstance(value, Decimal):
         return str(value)
@@ -152,11 +159,12 @@ def create_product(
     user,
     family,
     description,
-    stock,
     price,
     unit_of_measure,
     internal_code="",
     reorder_level="0",
+    cost="0",
+    wholesale="0",
     reason="",
     supplier_ids=None,
 ):
@@ -168,8 +176,10 @@ def create_product(
         family=family,
         internal_code=internal_code,
         description=description,
-        stock=Decimal(str(stock)),
+        stock=Decimal("0"),
+        cost=Decimal(str(cost)),
         price=Decimal(str(price)),
+        wholesale=Decimal(str(wholesale)),
         unit_of_measure=unit_of_measure,
         reorder_level=Decimal(str(reorder_level)),
         is_active=False,
@@ -185,7 +195,9 @@ def create_product(
             "internal_code": _serialize_value(product.internal_code),
             "description": product.description,
             "stock": _serialize_value(product.stock),
+            "cost": _serialize_value(product.cost),
             "price": _serialize_value(product.price),
+            "wholesale": _serialize_value(product.wholesale),
             "unit_of_measure": product.unit_of_measure,
             "reorder_level": _serialize_value(product.reorder_level),
         },
@@ -193,12 +205,11 @@ def create_product(
     )
 
     logger.info(
-        "Created product id=%s internal_code=%r description=%r family=%s stock=%s price=%s user=%s",
+        "Created product id=%s internal_code=%r description=%r family=%s price=%s user=%s",
         product.id,
         product.internal_code,
         product.description,
         product.family.name,
-        product.stock,
         product.price,
         getattr(user, "email", None),
     )
@@ -226,7 +237,7 @@ def update_product(user, product, reason="", supplier_ids=None, **fields):
         pending_internal_code = None
 
         for field_name, new_value in fields.items():
-            if field_name in ("stock", "price", "reorder_level"):
+            if field_name in ("price", "reorder_level", "cost", "wholesale"):
                 new_value = Decimal(str(new_value))
             elif field_name == "internal_code":
                 new_value = _normalize_internal_code(new_value)
@@ -267,6 +278,106 @@ def update_product(user, product, reason="", supplier_ids=None, **fields):
 
     if supplier_ids is not None:
         set_product_suppliers(product, supplier_ids)
+
+    return product
+
+
+@transaction.atomic
+def update_product_prices(user, product, reason="", **fields):
+    if not fields:
+        return product
+
+    unknown = set(fields) - set(PRICE_FIELDS)
+    if unknown:
+        raise ValueError(f"Cannot update fields: {', '.join(sorted(unknown))}")
+
+    product = Product.objects.select_for_update().get(pk=product.pk)
+    changes = {}
+    for field_name, new_value in fields.items():
+        new_value = Decimal(str(new_value))
+        old_value = getattr(product, field_name)
+        if old_value != new_value:
+            changes[field_name] = {
+                "old": _serialize_value(old_value),
+                "new": _serialize_value(new_value),
+            }
+            setattr(product, field_name, new_value)
+
+    if not changes:
+        return product
+
+    _save_product(product, update_fields=[*changes.keys(), "updated_at"])
+    _log_change(
+        product,
+        user,
+        ProductChangeLog.Action.UPDATED,
+        changes,
+        reason=reason,
+    )
+
+    logger.info(
+        "Updated product prices id=%s changes=%s user=%s",
+        product.id,
+        list(changes.keys()),
+        getattr(user, "email", None),
+    )
+
+    return product
+
+
+@transaction.atomic
+def apply_stock_change(
+    user,
+    product,
+    quantity_delta,
+    reason="",
+    source_type=StockMovement.SourceType.RECEIPT,
+    source_id=None,
+):
+    delta = Decimal(str(quantity_delta))
+    if delta == 0:
+        raise StockChangeError("Quantity change cannot be zero.")
+
+    product = Product.objects.select_for_update().get(pk=product.pk)
+    old_stock = product.stock
+    new_stock = old_stock + delta
+    if new_stock < 0:
+        raise StockChangeError("Stock cannot go below zero.")
+
+    product.stock = new_stock
+    _save_product(product, update_fields=["stock", "updated_at"])
+
+    StockMovement.objects.create(
+        product=product,
+        quantity=delta,
+        reason=(reason or "").strip(),
+        source_type=source_type,
+        source_id=source_id,
+        user=user,
+    )
+
+    _log_change(
+        product,
+        user,
+        ProductChangeLog.Action.UPDATED,
+        {
+            "stock": {
+                "old": _serialize_value(old_stock),
+                "new": _serialize_value(new_stock),
+            },
+        },
+        reason=reason,
+    )
+
+    logger.info(
+        "Stock change product id=%s delta=%s new_stock=%s source=%s:%s user=%s",
+        product.id,
+        delta,
+        new_stock,
+        source_type,
+        source_id,
+        getattr(user, "email", None),
+    )
 
     return product
 

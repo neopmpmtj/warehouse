@@ -47,8 +47,10 @@ class Product(models.Model):
     )
     internal_code = models.CharField(max_length=64, blank=True)
     description = models.CharField(max_length=255)
-    stock = models.DecimalField(max_digits=12, decimal_places=3)
+    stock = models.DecimalField(max_digits=12, decimal_places=3, default=0)
+    cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    wholesale = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     unit_of_measure = models.CharField(
         max_length=16,
         choices=UnitOfMeasure.choices,
@@ -218,3 +220,34 @@ class SupplierChangeLog(models.Model):
 
     def __str__(self):
         return f"{self.supplier_id} {self.action} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class StockMovement(models.Model):
+    class SourceType(models.TextChoices):
+        RECEIPT = "receipt", "Receipt"
+        ADJUSTMENT = "adjustment", "Adjustment"
+        ORDER = "order", "Order"
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="stock_movements",
+    )
+    quantity = models.DecimalField(max_digits=12, decimal_places=3)
+    reason = models.CharField(max_length=255, blank=True)
+    source_type = models.CharField(max_length=20, choices=SourceType.choices)
+    source_id = models.PositiveIntegerField(null=True, blank=True)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="stock_movements",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.product_id} {self.quantity} @ {self.created_at:%Y-%m-%d %H:%M}"

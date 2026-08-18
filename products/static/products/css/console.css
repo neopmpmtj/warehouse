@@ -54,6 +54,48 @@ body {
     color: var(--text);
 }
 
+.staff-nav {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.5rem 1.25rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.staff-nav-link {
+    color: var(--muted);
+    text-decoration: none;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.92rem;
+}
+
+.staff-nav-link:hover {
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+.staff-nav-link.is-active {
+    background: var(--selected);
+    color: var(--text);
+    font-weight: 600;
+}
+
+.prices-input {
+    width: 5.5rem;
+    font: inherit;
+    padding: 0.25rem 0.4rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text);
+}
+
+input[readonly] {
+    background: var(--surface-2);
+    color: var(--muted);
+}
+
 .topbar {
     display: flex;
     justify-content: space-between;

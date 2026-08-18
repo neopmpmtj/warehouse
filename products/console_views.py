@@ -33,6 +33,7 @@ from .services import (
     reactivate_product,
     update_product,
     update_product_family,
+    update_product_prices,
     update_supplier,
 )
 
@@ -101,7 +102,9 @@ def _serialize_product(product):
         "internal_code": product.internal_code,
         "description": product.description,
         "stock": _decimal_string(product.stock),
+        "cost": _decimal_string(product.cost),
         "price": _decimal_string(product.price),
+        "wholesale": _decimal_string(product.wholesale),
         "unit_of_measure": product.unit_of_measure,
         "reorder_level": _decimal_string(product.reorder_level),
         "is_active": product.is_active,
@@ -255,7 +258,6 @@ def manage_product_list(request):
             request.user,
             family=int(family_id),
             description=description,
-            stock=_parse_decimal(payload, "stock"),
             price=_parse_decimal(payload, "price"),
             unit_of_measure=_parse_unit(payload),
             internal_code=str(payload.get("internal_code", "")),
@@ -298,8 +300,6 @@ def manage_product_detail(request, product_id):
             fields["internal_code"] = str(payload["internal_code"])
         if "family_id" in payload:
             fields["family"] = int(payload["family_id"])
-        if "stock" in payload:
-            fields["stock"] = _parse_decimal(payload, "stock")
         if "price" in payload:
             fields["price"] = _parse_decimal(payload, "price")
         if "unit_of_measure" in payload:
@@ -417,6 +417,61 @@ def manage_product_history(request, product_id):
     return JsonResponse(
         {"history": [_serialize_history_entry(entry) for entry in entries]}
     )
+
+
+def _serialize_price_row(product):
+    return {
+        "id": product.id,
+        "internal_code": product.internal_code,
+        "description": product.description,
+        "cost": _decimal_string(product.cost),
+        "price": _decimal_string(product.price),
+        "wholesale": _decimal_string(product.wholesale),
+        "is_active": product.is_active,
+    }
+
+
+@staff_required
+@require_http_methods(["GET", "PATCH"])
+def manage_product_prices(request):
+    if request.method == "GET":
+        products = get_products(active_only=False).order_by("description")
+        return JsonResponse(
+            {"products": [_serialize_price_row(p) for p in products]}
+        )
+
+    try:
+        payload = _parse_json(request)
+        updates = payload.get("updates")
+        if not isinstance(updates, list):
+            raise ValidationError("updates must be a list.")
+        reason = str(payload.get("reason", ""))
+        updated = []
+        for item in updates:
+            product_id = int(item["id"])
+            product = Product.objects.get(pk=product_id)
+            fields = {}
+            if "cost" in item:
+                fields["cost"] = _parse_decimal(item, "cost")
+            if "price" in item:
+                fields["price"] = _parse_decimal(item, "price")
+            if "wholesale" in item:
+                fields["wholesale"] = _parse_decimal(item, "wholesale")
+            if fields:
+                product = update_product_prices(
+                    request.user,
+                    product,
+                    reason=reason,
+                    **fields,
+                )
+                updated.append(_serialize_price_row(product))
+    except Product.DoesNotExist:
+        return _json_error("Product not found.", status=404)
+    except (ValidationError, ValueError, TypeError) as exc:
+        message = exc.messages[0] if isinstance(exc, ValidationError) and getattr(exc, "messages", None) else str(exc)
+        return _json_error(message)
+
+    return JsonResponse({"products": updated})
 
 
 def _family_error(exc):

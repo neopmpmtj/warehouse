@@ -13,16 +13,16 @@ Central warehouse + satellite branches. Offline-capable product catalogue MVP (D
 
 - `accounts` — custom User, email login
 - `branches` — Branch, BranchMembership, active branch middleware, `seed_dev_data` command
-- `products` — catalogue, staff console `/manage/products/`, admin, audit logs, API, CLI, offline branch page, tests
+- `products` — catalogue, staff console `/manage/products/` (Prices drawer), stock ledger, admin, audit, API, CLI, offline branch page, tests
+- `procurement` — PO draft → superuser approve → goods receipt; `/manage/procurement/`; tests
 - `logging_utils` — centralized logging to `logs/`
-- **Inbound stock / procurement** — not built; next product-side design (supplier receipt → `Product.stock`)
-- `orders` — not built; wait until inbound stock exists
-- **Tests** — `products/tests.py` (catalogue + console, ~86 tests); `accounts` / `branches` stubs
+- `orders` — not built; next business phase
+- **Tests** — `products` + `procurement`; `accounts` / `branches` stubs
 
 ## Non-negotiables
 
 - PostgreSQL = source of truth; IndexedDB = read-only catalogue cache
-- Branch users: read-only catalogue; warehouse staff manage products via `/manage/products/` + `products/services.py`
+- Branch users: read-only catalogue; warehouse staff manage products + purchases; stock only via receipts (`apply_stock_change`)
 - Business logic in `services.py`; views/commands stay thin
 - Branch permissions via `branches/permissions.py`; catalogue via `products/permissions.py` (`is_staff`)
 - Plain Django + plain JavaScript — no React/Vue

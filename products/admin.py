@@ -51,8 +51,9 @@ class ProductAdminForm(forms.ModelForm):
             "family",
             "internal_code",
             "description",
-            "stock",
+            "cost",
             "price",
+            "wholesale",
             "unit_of_measure",
             "reorder_level",
         )
@@ -149,7 +150,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_filter = ("is_active", "family", "unit_of_measure")
     search_fields = ("internal_code", "description", "family__name")
     autocomplete_fields = ("family",)
-    readonly_fields = ("is_active", "created_at", "updated_at")
+    readonly_fields = ("stock", "is_active", "created_at", "updated_at")
     inlines = (ProductSupplierInline, ProductChangeLogInline)
     actions = ("deactivate_products", "reactivate_products")
     fieldsets = (
@@ -161,9 +162,11 @@ class ProductAdmin(admin.ModelAdmin):
                     "internal_code",
                     "description",
                     "stock",
+                    "cost",
+                    "price",
+                    "wholesale",
                     "unit_of_measure",
                     "reorder_level",
-                    "price",
                     "is_active",
                     "created_at",
                     "updated_at",
@@ -213,8 +216,9 @@ class ProductAdmin(admin.ModelAdmin):
                     family=form.cleaned_data["family"],
                     internal_code=form.cleaned_data["internal_code"],
                     description=form.cleaned_data["description"],
-                    stock=form.cleaned_data["stock"],
+                    cost=form.cleaned_data["cost"],
                     price=form.cleaned_data["price"],
+                    wholesale=form.cleaned_data["wholesale"],
                     unit_of_measure=form.cleaned_data["unit_of_measure"],
                     reorder_level=form.cleaned_data["reorder_level"],
                 )
@@ -224,8 +228,9 @@ class ProductAdmin(admin.ModelAdmin):
                     request.user,
                     family=form.cleaned_data["family"],
                     description=form.cleaned_data["description"],
-                    stock=form.cleaned_data["stock"],
+                    cost=form.cleaned_data["cost"],
                     price=form.cleaned_data["price"],
+                    wholesale=form.cleaned_data["wholesale"],
                     unit_of_measure=form.cleaned_data["unit_of_measure"],
                     internal_code=form.cleaned_data.get("internal_code", ""),
                     reorder_level=form.cleaned_data["reorder_level"],

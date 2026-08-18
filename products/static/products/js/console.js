@@ -1,4 +1,5 @@
 const API_ROOT = "/api/manage/products/";
+const PRICES_API = "/api/manage/products/prices/";
 const FAMILY_API = "/api/manage/families/";
 const SUPPLIER_API = "/api/manage/suppliers/";
 const THEME_KEY = "cc-theme";
@@ -17,6 +18,7 @@ const state = {
     familyHistoryEntries: [],
     supplierHistoryId: null,
     supplierHistoryEntries: [],
+    priceRows: [],
 };
 
 let familyHistoryRequestId = 0;
@@ -568,6 +570,108 @@ function closeFamilyDrawer() {
     resetFamilyHistory();
 }
 
+function closePricesDrawer() {
+    document.getElementById("prices-drawer").hidden = true;
+    document.getElementById("prices-drawer-backdrop").hidden = true;
+    state.priceRows = [];
+}
+
+async function openPricesDrawer() {
+    closeDrawer();
+    closeFamilyDrawer();
+    closeSupplierDrawer();
+    document.getElementById("prices-drawer").hidden = false;
+    document.getElementById("prices-drawer-backdrop").hidden = false;
+    try {
+        const data = await api(PRICES_API);
+        state.priceRows = data.products.map((row) => ({ ...row }));
+        renderPricesTable();
+    } catch (error) {
+        showBanner(error.message, true);
+    }
+}
+
+function renderPricesTable() {
+    const body = document.getElementById("prices-table-body");
+    if (!body) {
+        return;
+    }
+    body.replaceChildren();
+    state.priceRows.forEach((row) => {
+        const tr = document.createElement("tr");
+        if (!row.is_active) {
+            tr.classList.add("is-inactive");
+        }
+        const code = document.createElement("td");
+        code.textContent = row.internal_code || "—";
+        const desc = document.createElement("td");
+        desc.textContent = row.description;
+        const costCell = document.createElement("td");
+        const costInput = document.createElement("input");
+        costInput.type = "number";
+        costInput.step = "0.01";
+        costInput.className = "prices-input";
+        costInput.value = row.cost;
+        costInput.dataset.field = "cost";
+        costInput.dataset.id = String(row.id);
+        costCell.appendChild(costInput);
+        const sellCell = document.createElement("td");
+        const sellInput = document.createElement("input");
+        sellInput.type = "number";
+        sellInput.step = "0.01";
+        sellInput.className = "prices-input";
+        sellInput.value = row.price;
+        sellInput.dataset.field = "price";
+        sellInput.dataset.id = String(row.id);
+        sellCell.appendChild(sellInput);
+        const wholesaleCell = document.createElement("td");
+        const wholesaleInput = document.createElement("input");
+        wholesaleInput.type = "number";
+        wholesaleInput.step = "0.01";
+        wholesaleInput.className = "prices-input";
+        wholesaleInput.value = row.wholesale;
+        wholesaleInput.dataset.field = "wholesale";
+        wholesaleInput.dataset.id = String(row.id);
+        wholesaleCell.appendChild(wholesaleInput);
+        tr.append(code, desc, costCell, sellCell, wholesaleCell);
+        body.appendChild(tr);
+    });
+}
+
+async function savePrices() {
+    clearBanner();
+    const inputs = document.querySelectorAll("#prices-table-body .prices-input");
+    const byId = {};
+    inputs.forEach((input) => {
+        const id = Number(input.dataset.id);
+        const field = input.dataset.field;
+        if (!byId[id]) {
+            byId[id] = { id };
+        }
+        byId[id][field] = input.value;
+    });
+    const updates = Object.values(byId);
+    try {
+        const data = await api(PRICES_API, {
+            method: "PATCH",
+            body: JSON.stringify({ updates }),
+        });
+        data.products.forEach((row) => {
+            const index = state.products.findIndex((p) => p.id === row.id);
+            if (index !== -1) {
+                state.products[index].cost = row.cost;
+                state.products[index].price = row.price;
+                state.products[index].wholesale = row.wholesale;
+            }
+        });
+        renderTable();
+        showBanner(t("pricesSaved"));
+        closePricesDrawer();
+    } catch (error) {
+        showBanner(error.message, true);
+    }
+}
+
 async function openFamilyDrawer() {
     closeDrawer();
     closeSupplierDrawer();
@@ -1078,7 +1182,6 @@ function formPayload() {
         family_id: Number(document.getElementById("field-family").value),
         internal_code: document.getElementById("field-internal-code").value,
         description: document.getElementById("field-description").value,
-        stock: document.getElementById("field-stock").value,
         price: document.getElementById("field-price").value,
         unit_of_measure: document.getElementById("field-unit").value,
         reorder_level: document.getElementById("field-reorder").value,
@@ -1581,6 +1684,12 @@ function bindEvents() {
     document.getElementById("manage-suppliers").addEventListener("click", () => {
         openSupplierDrawer();
     });
+    document.getElementById("manage-prices").addEventListener("click", () => {
+        openPricesDrawer();
+    });
+    document.getElementById("prices-drawer-close").addEventListener("click", closePricesDrawer);
+    document.getElementById("prices-drawer-backdrop").addEventListener("click", closePricesDrawer);
+    document.getElementById("prices-save").addEventListener("click", savePrices);
     document.getElementById("new-product").addEventListener("click", () => startNewProduct());
     document.getElementById("new-family").addEventListener("click", () => promptCreateFamily(false));
     document.getElementById("new-family-inline").addEventListener("click", () => createFamilyFromProductForm());

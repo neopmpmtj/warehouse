@@ -13,6 +13,7 @@ from products.seed_catalog_data import (
     SUPPLIERS,
 )
 from products.services import (
+    apply_stock_change,
     create_product,
     create_product_family,
     create_supplier,
@@ -192,13 +193,20 @@ class Command(BaseCommand):
                     user=warehouse_user,
                     family=family,
                     description=description,
-                    stock=stock,
                     price=Decimal(price),
                     unit_of_measure=unit,
                     internal_code=internal_code,
                     reorder_level=reorder_level,
+                    cost=Decimal(price) * Decimal("0.6"),
                     reason="seed_dev_data",
                 )
+                if Decimal(stock) > 0:
+                    apply_stock_change(
+                        warehouse_user,
+                        product,
+                        Decimal(stock),
+                        reason="seed_dev_data initial stock",
+                    )
                 if is_active:
                     reactivate_product(warehouse_user, product, reason="Genesis")
                 products_by_code[internal_code] = product

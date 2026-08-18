@@ -1,7 +1,12 @@
 from django.core.management.base import BaseCommand, CommandError
 
-from products.models import Product, ProductFamily
-from products.services import create_product, get_product_families, reactivate_product
+from products.models import Product, ProductFamily, StockMovement
+from products.services import (
+    apply_stock_change,
+    create_product,
+    get_product_families,
+    reactivate_product,
+)
 
 
 class Command(BaseCommand):
@@ -9,12 +14,26 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("description", type=str)
-        parser.add_argument("stock", type=str)
         parser.add_argument("price", type=str)
         parser.add_argument(
             "--family",
             required=True,
             help="Product family name (must exist)",
+        )
+        parser.add_argument(
+            "--stock",
+            default="0",
+            help="Initial stock (applied via stock ledger; default: 0)",
+        )
+        parser.add_argument(
+            "--cost",
+            default="0",
+            help="Unit cost (default: 0)",
+        )
+        parser.add_argument(
+            "--wholesale",
+            default="0",
+            help="Wholesale price (default: 0)",
         )
         parser.add_argument(
             "--unit",
@@ -55,12 +74,24 @@ class Command(BaseCommand):
             user=None,
             family=family,
             description=options["description"],
-            stock=options["stock"],
             price=options["price"],
+            cost=options["cost"],
+            wholesale=options["wholesale"],
             unit_of_measure=options["unit"],
             internal_code=options["internal_code"],
             reorder_level=options["reorder_level"],
         )
+
+        stock = options["stock"]
+        if stock and stock != "0":
+            apply_stock_change(
+                user=None,
+                product=product,
+                quantity_delta=stock,
+                reason="add_product initial stock",
+                source_type=StockMovement.SourceType.ADJUSTMENT,
+            )
+            product.refresh_from_db()
 
         if options["activate"]:
             reactivate_product(user=None, product=product, reason="Genesis")
@@ -70,6 +101,6 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"Product created ({status}): ID={product.id}, "
-                f"{product.internal_code} — {product.description}"
+                f"{product.internal_code} — {product.description}, stock={product.stock}"
             )
         )

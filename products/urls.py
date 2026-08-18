@@ -36,6 +36,11 @@ urlpatterns = [
         name="manage_supplier_history",
     ),
     path(
+        "manage/products/prices/",
+        console_views.manage_product_prices,
+        name="manage_product_prices",
+    ),
+    path(
         "manage/products/",
         console_views.manage_product_list,
         name="manage_product_list",
