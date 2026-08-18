@@ -7,7 +7,12 @@ from django.template.response import TemplateResponse
 from .models import Product, ProductChangeLog, ProductFamily, ProductSupplier, Supplier
 from .permissions import can_manage_catalog
 from .services import (
+    DuplicateFamilyNameError,
     DuplicateInternalCodeError,
+    DuplicateSupplierNameError,
+    FamilyNameRequiredError,
+    InvalidSupplierEmailError,
+    SupplierNameRequiredError,
     create_product,
     create_product_family,
     create_supplier,
@@ -18,7 +23,9 @@ from .services import (
     update_product,
     update_product_family,
     update_supplier,
+    validate_family_name_available,
     validate_internal_code_available,
+    validate_supplier_name_available,
 )
 
 
@@ -190,7 +197,7 @@ class ProductAdmin(admin.ModelAdmin):
                 )
                 obj.pk = created.pk
         except DuplicateInternalCodeError as exc:
-            raise ValidationError({"internal_code": exc.messages}) from exc
+            raise ValidationError({"internal_code": exc.messages[0]}) from exc
 
         obj.refresh_from_db()
 
@@ -281,8 +288,29 @@ class SupplierProductInline(admin.TabularInline):
         return False
 
 
+class SupplierAdminForm(forms.ModelForm):
+    class Meta:
+        model = Supplier
+        fields = (
+            "name",
+            "contact_name",
+            "email",
+            "phone",
+            "notes",
+            "is_active",
+        )
+
+    def clean_name(self):
+        exclude_supplier_id = self.instance.pk if self.instance.pk else None
+        return validate_supplier_name_available(
+            self.cleaned_data.get("name", ""),
+            exclude_supplier_id=exclude_supplier_id,
+        )
+
+
 @admin.register(Supplier)
 class SupplierAdmin(admin.ModelAdmin):
+    form = SupplierAdminForm
     list_display = (
         "name",
         "contact_name",
@@ -337,25 +365,32 @@ class SupplierAdmin(admin.ModelAdmin):
         if not can_manage_catalog(request.user):
             raise PermissionDenied
 
-        if change:
-            update_supplier(
-                obj,
-                name=form.cleaned_data["name"],
-                contact_name=form.cleaned_data["contact_name"],
-                email=form.cleaned_data["email"],
-                phone=form.cleaned_data["phone"],
-                notes=form.cleaned_data["notes"],
-                is_active=form.cleaned_data["is_active"],
-            )
-        else:
-            created = create_supplier(
-                name=form.cleaned_data["name"],
-                contact_name=form.cleaned_data["contact_name"],
-                email=form.cleaned_data["email"],
-                phone=form.cleaned_data["phone"],
-                notes=form.cleaned_data["notes"],
-            )
-            obj.pk = created.pk
+        try:
+            if change:
+                update_supplier(
+                    obj,
+                    name=form.cleaned_data["name"],
+                    contact_name=form.cleaned_data["contact_name"],
+                    email=form.cleaned_data["email"],
+                    phone=form.cleaned_data["phone"],
+                    notes=form.cleaned_data["notes"],
+                    is_active=form.cleaned_data["is_active"],
+                )
+            else:
+                created = create_supplier(
+                    name=form.cleaned_data["name"],
+                    contact_name=form.cleaned_data["contact_name"],
+                    email=form.cleaned_data["email"],
+                    phone=form.cleaned_data["phone"],
+                    notes=form.cleaned_data["notes"],
+                )
+                obj.pk = created.pk
+        except DuplicateSupplierNameError as exc:
+            raise ValidationError({"name": exc.messages[0]}) from exc
+        except SupplierNameRequiredError as exc:
+            raise ValidationError({"name": exc.messages[0]}) from exc
+        except InvalidSupplierEmailError as exc:
+            raise ValidationError({"email": exc.messages[0]}) from exc
 
         obj.refresh_from_db()
 
@@ -377,8 +412,22 @@ class ProductFamilyProductInline(admin.TabularInline):
         return False
 
 
+class ProductFamilyAdminForm(forms.ModelForm):
+    class Meta:
+        model = ProductFamily
+        fields = ("name", "is_active")
+
+    def clean_name(self):
+        exclude_family_id = self.instance.pk if self.instance.pk else None
+        return validate_family_name_available(
+            self.cleaned_data.get("name", ""),
+            exclude_family_id=exclude_family_id,
+        )
+
+
 @admin.register(ProductFamily)
 class ProductFamilyAdmin(admin.ModelAdmin):
+    form = ProductFamilyAdminForm
     list_display = ("name", "product_count", "is_active", "updated_at")
     list_filter = ("is_active",)
     search_fields = ("name",)
@@ -421,18 +470,23 @@ class ProductFamilyAdmin(admin.ModelAdmin):
         if not can_manage_catalog(request.user):
             raise PermissionDenied
 
-        if change:
-            update_product_family(
-                obj,
-                name=form.cleaned_data["name"],
-                is_active=form.cleaned_data["is_active"],
-            )
-        else:
-            created = create_product_family(
-                name=form.cleaned_data["name"],
-                is_active=form.cleaned_data["is_active"],
-            )
-            obj.pk = created.pk
+        try:
+            if change:
+                update_product_family(
+                    obj,
+                    name=form.cleaned_data["name"],
+                    is_active=form.cleaned_data["is_active"],
+                )
+            else:
+                created = create_product_family(
+                    name=form.cleaned_data["name"],
+                    is_active=form.cleaned_data["is_active"],
+                )
+                obj.pk = created.pk
+        except DuplicateFamilyNameError as exc:
+            raise ValidationError({"name": exc.messages[0]}) from exc
+        except FamilyNameRequiredError as exc:
+            raise ValidationError({"name": exc.messages[0]}) from exc
 
         obj.refresh_from_db()
 

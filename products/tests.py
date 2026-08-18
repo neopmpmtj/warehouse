@@ -7,13 +7,18 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from branches.models import Branch, BranchMembership
-from products.models import Product, ProductChangeLog
+from products.models import Product, ProductChangeLog, ProductFamily, Supplier
 from products.permissions import can_manage_catalog
 from products.seed_catalog_data import PRODUCTS
 from products.services import (
     DeactivateReasonRequiredError,
-    ReactivateReasonRequiredError,
+    DuplicateFamilyNameError,
     DuplicateInternalCodeError,
+    DuplicateSupplierNameError,
+    FamilyNameRequiredError,
+    InvalidSupplierEmailError,
+    ReactivateReasonRequiredError,
+    SupplierNameRequiredError,
     create_product,
     create_product_family,
     create_supplier,
@@ -339,6 +344,44 @@ class ProductFamilyServiceTests(TestCase):
         self.assertEqual(get_product_families(active_only=False).count(), 1)
         self.assertEqual(get_product_families().count(), 0)
 
+    def test_create_product_family_rejects_empty_name(self):
+        with self.assertRaises(FamilyNameRequiredError):
+            create_product_family("   ")
+
+        self.assertEqual(get_product_families(active_only=False).count(), 0)
+
+    def test_create_product_family_rejects_duplicate_name(self):
+        create_product_family("Cement")
+
+        with self.assertRaises(DuplicateFamilyNameError):
+            create_product_family("Cement")
+
+        with self.assertRaises(DuplicateFamilyNameError):
+            create_product_family("cement")
+
+        with self.assertRaises(DuplicateFamilyNameError):
+            create_product_family("CEMENT")
+
+        self.assertEqual(get_product_families(active_only=False).count(), 1)
+
+    def test_update_product_family_rejects_duplicate_name(self):
+        create_product_family("Cement")
+        pipes = create_product_family("Pipes")
+
+        with self.assertRaises(DuplicateFamilyNameError):
+            update_product_family(pipes, name="cement")
+
+        pipes.refresh_from_db()
+        self.assertEqual(pipes.name, "Pipes")
+
+    def test_update_product_family_allows_unchanged_name(self):
+        family = create_product_family("Cement")
+
+        updated = update_product_family(family, name="Cement", is_active=False)
+
+        self.assertEqual(updated.name, "Cement")
+        self.assertFalse(updated.is_active)
+
 
 class ProductPermissionTests(TestCase):
     def setUp(self):
@@ -432,6 +475,27 @@ class ProductFamilyAdminAccessTests(TestCase):
         response = self.client.get(self.family_changelist_url)
 
         self.assertIn(response.status_code, (302, 403))
+
+    def test_admin_create_rejects_duplicate_family_name(self):
+        create_product_family("Cement")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("admin:products_productfamily_add"),
+            {"name": "cement", "is_active": "on", "_save": "Save"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        form = response.context["adminform"].form
+        self.assertFormError(
+            form,
+            "name",
+            'Family name "cement" is already used.',
+        )
+        self.assertEqual(
+            ProductFamily.objects.filter(name__iexact="Cement").count(),
+            1,
+        )
 
 
 class ProductApiTests(ProductTestCaseMixin, TestCase):
@@ -656,6 +720,27 @@ class SupplierServiceTests(ProductTestCaseMixin, TestCase):
 
         self.assertEqual(names, ["Active Supplier"])
 
+    def test_create_supplier_rejects_empty_name(self):
+        with self.assertRaises(SupplierNameRequiredError):
+            create_supplier("   ")
+
+        self.assertEqual(get_suppliers(active_only=False).count(), 0)
+
+    def test_create_supplier_rejects_duplicate_name_case_insensitive(self):
+        create_supplier(name="BuildSupply Ltd")
+
+        with self.assertRaises(DuplicateSupplierNameError):
+            create_supplier(name="BuildSupply Ltd")
+
+        with self.assertRaises(DuplicateSupplierNameError):
+            create_supplier(name="buildsupply ltd")
+
+        self.assertEqual(get_suppliers(active_only=False).count(), 1)
+
+    def test_create_supplier_rejects_invalid_email(self):
+        with self.assertRaises(InvalidSupplierEmailError):
+            create_supplier(name="BuildSupply Ltd", email="not-an-email")
+
 
 class SupplierAdminAccessTests(TestCase):
     def setUp(self):
@@ -691,6 +776,27 @@ class SupplierAdminAccessTests(TestCase):
         response = self.client.get(self.supplier_changelist_url)
 
         self.assertIn(response.status_code, (302, 403))
+
+    def test_admin_create_rejects_duplicate_supplier_name(self):
+        create_supplier("BuildSupply Ltd")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("admin:products_supplier_add"),
+            {"name": "buildsupply ltd", "is_active": "on", "_save": "Save"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        form = response.context["adminform"].form
+        self.assertFormError(
+            form,
+            "name",
+            'Supplier name "buildsupply ltd" is already used.',
+        )
+        self.assertEqual(
+            Supplier.objects.filter(name__iexact="BuildSupply Ltd").count(),
+            1,
+        )
 
 
 class ProductConsoleTests(ProductTestCaseMixin, TestCase):
@@ -943,3 +1049,229 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
         self.assertEqual(response.json()["code"], "deactivate_reason_required")
         product.refresh_from_db()
         self.assertTrue(product.is_active)
+
+    def test_staff_can_create_family_through_console_api(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "Pipes"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["family"]
+        self.assertEqual(payload["name"], "Pipes")
+        self.assertTrue(payload["is_active"])
+        self.assertEqual(payload["product_count"], 0)
+
+        list_response = self.client.get(reverse("manage_family_list"))
+        names = [family["name"] for family in list_response.json()["families"]]
+        self.assertIn("Pipes", names)
+
+    def test_console_create_family_rejects_empty_and_duplicate_name(self):
+        self.client.force_login(self.staff_user)
+
+        empty = self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "  "}),
+            content_type="application/json",
+        )
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(empty.json()["code"], "family_name_required")
+
+        self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "Cement"}),
+            content_type="application/json",
+        )
+        duplicate = self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "Cement"}),
+            content_type="application/json",
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(duplicate.json()["code"], "duplicate_family_name")
+
+        duplicate_case = self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "cement"}),
+            content_type="application/json",
+        )
+        self.assertEqual(duplicate_case.status_code, 400)
+        self.assertEqual(duplicate_case.json()["code"], "duplicate_family_name")
+
+    def test_staff_can_rename_and_deactivate_family_through_console_api(self):
+        family = self.create_test_family("Original")
+        self.client.force_login(self.staff_user)
+
+        rename = self.client.patch(
+            reverse("manage_family_detail", args=[family.id]),
+            data=json.dumps({"name": "Renamed"}),
+            content_type="application/json",
+        )
+        self.assertEqual(rename.status_code, 200)
+        self.assertEqual(rename.json()["family"]["name"], "Renamed")
+
+        deactivate = self.client.patch(
+            reverse("manage_family_detail", args=[family.id]),
+            data=json.dumps({"is_active": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(deactivate.status_code, 200)
+        family.refresh_from_db()
+        self.assertFalse(family.is_active)
+
+    def test_console_family_payload_includes_product_count(self):
+        self.create_test_product(self.staff_user, description="Counted")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(reverse("manage_product_list"))
+
+        families = {item["name"]: item for item in response.json()["families"]}
+        self.assertEqual(families[self.family.name]["product_count"], 1)
+
+    def test_staff_can_create_product_with_newly_created_family(self):
+        self.client.force_login(self.staff_user)
+        family_response = self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "New Line"}),
+            content_type="application/json",
+        )
+        family_id = family_response.json()["family"]["id"]
+
+        product_response = self.client.post(
+            reverse("manage_product_list"),
+            data=json.dumps({
+                "family_id": family_id,
+                "description": "Family-first item",
+                "stock": "1",
+                "price": "2.00",
+                "unit_of_measure": Product.UnitOfMeasure.PIECE,
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(product_response.status_code, 200)
+        product = Product.objects.get(pk=product_response.json()["product"]["id"])
+        self.assertEqual(product.family_id, family_id)
+        self.assertFalse(product.is_active)
+
+    def test_branch_user_cannot_use_family_api(self):
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(reverse("manage_family_list"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_staff_can_create_supplier_through_console_api(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({
+                "name": "BuildSupply Ltd",
+                "contact_name": "Ana Ribeiro",
+                "email": "sales@buildsupply.dev",
+                "phone": "+351 210 000 001",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["supplier"]
+        self.assertEqual(payload["name"], "BuildSupply Ltd")
+        self.assertEqual(payload["contact_name"], "Ana Ribeiro")
+        self.assertTrue(payload["is_active"])
+        self.assertEqual(payload["product_count"], 0)
+
+    def test_console_create_supplier_rejects_empty_duplicate_and_invalid_email(self):
+        self.client.force_login(self.staff_user)
+
+        empty = self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({"name": "  "}),
+            content_type="application/json",
+        )
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(empty.json()["code"], "supplier_name_required")
+
+        self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({"name": "BuildSupply Ltd"}),
+            content_type="application/json",
+        )
+        duplicate = self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({"name": "buildsupply ltd"}),
+            content_type="application/json",
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(duplicate.json()["code"], "duplicate_supplier_name")
+
+        invalid_email = self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({"name": "Other Co", "email": "not-an-email"}),
+            content_type="application/json",
+        )
+        self.assertEqual(invalid_email.status_code, 400)
+        self.assertEqual(invalid_email.json()["code"], "invalid_supplier_email")
+
+    def test_staff_can_update_and_deactivate_supplier_through_console_api(self):
+        supplier = create_supplier(name="BuildSupply Ltd")
+        self.client.force_login(self.staff_user)
+
+        update = self.client.patch(
+            reverse("manage_supplier_detail", args=[supplier.id]),
+            data=json.dumps({
+                "contact_name": "Ana Ribeiro",
+                "phone": "+351 210 000 001",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(update.status_code, 200)
+        self.assertEqual(update.json()["supplier"]["contact_name"], "Ana Ribeiro")
+        supplier.refresh_from_db()
+        self.assertEqual(supplier.name, "BuildSupply Ltd")
+
+        deactivate = self.client.patch(
+            reverse("manage_supplier_detail", args=[supplier.id]),
+            data=json.dumps({"is_active": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(deactivate.status_code, 200)
+        supplier.refresh_from_db()
+        self.assertFalse(supplier.is_active)
+
+    def test_staff_can_create_product_with_newly_created_supplier(self):
+        self.client.force_login(self.staff_user)
+        supplier_response = self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({"name": "New Vendor"}),
+            content_type="application/json",
+        )
+        supplier_id = supplier_response.json()["supplier"]["id"]
+
+        product_response = self.client.post(
+            reverse("manage_product_list"),
+            data=json.dumps({
+                "family_id": self.family.id,
+                "description": "Optional supplier item",
+                "stock": "1",
+                "price": "2.00",
+                "unit_of_measure": Product.UnitOfMeasure.PIECE,
+                "supplier_ids": [supplier_id],
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(product_response.status_code, 200)
+        product = Product.objects.get(pk=product_response.json()["product"]["id"])
+        self.assertEqual(list(product.product_suppliers.values_list("supplier_id", flat=True)), [supplier_id])
+
+    def test_branch_user_cannot_use_supplier_api(self):
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(reverse("manage_supplier_list"))
+
+        self.assertEqual(response.status_code, 403)

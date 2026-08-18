@@ -320,6 +320,12 @@ input[type="search"] {
     display: none !important;
 }
 
+.field-error {
+    margin: 0;
+    color: var(--danger);
+    font-size: 0.85rem;
+}
+
 .dialog {
     position: fixed;
     top: 50%;
@@ -437,6 +443,36 @@ input[type="search"] {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem;
+}
+
+.field-with-action {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.5rem;
+    align-items: end;
+}
+
+.field-with-action label {
+    display: grid;
+    gap: 0.3rem;
+}
+
+.drawer-help {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.legend-with-action {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.dialog-form {
+    width: min(32rem, calc(100% - 2rem));
 }
 
 .checkbox-list {

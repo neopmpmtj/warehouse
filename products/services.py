@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
@@ -42,6 +43,46 @@ class ReactivateReasonRequiredError(ValidationError):
         super().__init__(
             "A reason is required to activate a product.",
             code="reactivate_reason_required",
+        )
+
+
+class FamilyNameRequiredError(ValidationError):
+    def __init__(self):
+        super().__init__(
+            "Family name is required.",
+            code="family_name_required",
+        )
+
+
+class DuplicateFamilyNameError(ValidationError):
+    def __init__(self, name):
+        super().__init__(
+            f'Family name "{name}" is already used.',
+            code="duplicate_family_name",
+        )
+
+
+class SupplierNameRequiredError(ValidationError):
+    def __init__(self):
+        super().__init__(
+            "Supplier name is required.",
+            code="supplier_name_required",
+        )
+
+
+class DuplicateSupplierNameError(ValidationError):
+    def __init__(self, name):
+        super().__init__(
+            f'Supplier name "{name}" is already used.',
+            code="duplicate_supplier_name",
+        )
+
+
+class InvalidSupplierEmailError(ValidationError):
+    def __init__(self):
+        super().__init__(
+            "Enter a valid email address.",
+            code="invalid_supplier_email",
         )
 
 
@@ -304,12 +345,43 @@ def get_product_history(product):
 FAMILY_UPDATABLE_FIELDS = ("name", "is_active")
 
 
+def _normalize_family_name(name):
+    return (name or "").strip()
+
+
+def validate_family_name_available(name, exclude_family_id=None):
+    name = _normalize_family_name(name)
+    if not name:
+        raise FamilyNameRequiredError()
+
+    queryset = ProductFamily.objects.filter(name__iexact=name)
+    if exclude_family_id is not None:
+        queryset = queryset.exclude(pk=exclude_family_id)
+    if queryset.exists():
+        raise DuplicateFamilyNameError(name)
+    return name
+
+
+def _save_family(family, update_fields=None):
+    try:
+        if update_fields is None:
+            family.save()
+        else:
+            family.save(update_fields=update_fields)
+    except IntegrityError as exc:
+        message = str(exc).lower()
+        if "productfamily_name" in message or "unique_productfamily_name_ci" in message:
+            raise DuplicateFamilyNameError(family.name) from exc
+        raise
+
+
 def create_product_family(name, is_active=True):
+    name = validate_family_name_available(name)
     family = ProductFamily(
-        name=name.strip(),
+        name=name,
         is_active=is_active,
     )
-    family.save()
+    _save_family(family, update_fields=None)
 
     logger.info(
         "Created product family id=%s name=%r",
@@ -334,7 +406,10 @@ def update_product_family(family, **fields):
     update_fields = []
     for field_name, new_value in fields.items():
         if field_name == "name":
-            new_value = new_value.strip()
+            new_value = validate_family_name_available(
+                new_value,
+                exclude_family_id=family.pk,
+            )
         old_value = getattr(family, field_name)
         if old_value != new_value:
             setattr(family, field_name, new_value)
@@ -344,7 +419,7 @@ def update_product_family(family, **fields):
         return family
 
     update_fields.append("updated_at")
-    family.save(update_fields=update_fields)
+    _save_family(family, update_fields=update_fields)
 
     logger.info(
         "Updated product family id=%s fields=%s",
@@ -372,16 +447,58 @@ SUPPLIER_UPDATABLE_FIELDS = (
 )
 
 
+def _normalize_supplier_name(name):
+    return (name or "").strip()
+
+
+def validate_supplier_name_available(name, exclude_supplier_id=None):
+    name = _normalize_supplier_name(name)
+    if not name:
+        raise SupplierNameRequiredError()
+
+    queryset = Supplier.objects.filter(name__iexact=name)
+    if exclude_supplier_id is not None:
+        queryset = queryset.exclude(pk=exclude_supplier_id)
+    if queryset.exists():
+        raise DuplicateSupplierNameError(name)
+    return name
+
+
+def _normalize_supplier_email(email):
+    email = (email or "").strip()
+    if not email:
+        return ""
+    try:
+        validate_email(email)
+    except ValidationError as exc:
+        raise InvalidSupplierEmailError() from exc
+    return email
+
+
+def _save_supplier(supplier, update_fields=None):
+    try:
+        if update_fields is None:
+            supplier.save()
+        else:
+            supplier.save(update_fields=update_fields)
+    except IntegrityError as exc:
+        message = str(exc).lower()
+        if "unique_supplier_name_ci" in message or "supplier_name" in message:
+            raise DuplicateSupplierNameError(supplier.name) from exc
+        raise
+
+
 def create_supplier(name, contact_name="", email="", phone="", notes=""):
+    name = validate_supplier_name_available(name)
     supplier = Supplier(
-        name=name.strip(),
-        contact_name=contact_name.strip(),
-        email=email.strip(),
-        phone=phone.strip(),
-        notes=notes.strip(),
+        name=name,
+        contact_name=(contact_name or "").strip(),
+        email=_normalize_supplier_email(email),
+        phone=(phone or "").strip(),
+        notes=(notes or "").strip(),
         is_active=True,
     )
-    supplier.save()
+    _save_supplier(supplier, update_fields=None)
 
     logger.info(
         "Created supplier id=%s name=%r",
@@ -405,8 +522,15 @@ def update_supplier(supplier, **fields):
 
     update_fields = []
     for field_name, new_value in fields.items():
-        if field_name in ("name", "contact_name", "email", "phone", "notes"):
-            new_value = new_value.strip()
+        if field_name == "name":
+            new_value = validate_supplier_name_available(
+                new_value,
+                exclude_supplier_id=supplier.pk,
+            )
+        elif field_name == "email":
+            new_value = _normalize_supplier_email(new_value)
+        elif field_name in ("contact_name", "phone", "notes"):
+            new_value = (new_value or "").strip()
         old_value = getattr(supplier, field_name)
         if old_value != new_value:
             setattr(supplier, field_name, new_value)
@@ -416,7 +540,7 @@ def update_supplier(supplier, **fields):
         return supplier
 
     update_fields.append("updated_at")
-    supplier.save(update_fields=update_fields)
+    _save_supplier(supplier, update_fields=update_fields)
 
     logger.info(
         "Updated supplier id=%s fields=%s",

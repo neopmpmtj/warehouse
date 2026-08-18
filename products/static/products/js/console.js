@@ -1,4 +1,6 @@
 const API_ROOT = "/api/manage/products/";
+const FAMILY_API = "/api/manage/families/";
+const SUPPLIER_API = "/api/manage/suppliers/";
 const THEME_KEY = "cc-theme";
 const LANG_KEY = "cc-lang";
 
@@ -88,6 +90,8 @@ function setLanguage(lang) {
     fillFilterOptions();
     fillFormLookups();
     renderTable();
+    renderFamilyTable();
+    renderSupplierTable();
     refreshDrawerLabels();
 }
 
@@ -310,12 +314,18 @@ function fillFilterOptions() {
 }
 
 function fillFormLookups() {
-    fillSelect(
-        document.getElementById("field-family"),
-        state.families.map((family) => ({
+    const familySelect = document.getElementById("field-family");
+    const selected = familySelect.value;
+    const familyOptions = state.families
+        .filter((family) => family.is_active || String(family.id) === selected)
+        .map((family) => ({
             value: String(family.id),
             label: family.is_active ? family.name : `${family.name} (${t("inactive")})`,
-        }))
+        }));
+    fillSelect(
+        familySelect,
+        familyOptions,
+        familyOptions.length ? null : t("noFamilies")
     );
     fillSelect(
         document.getElementById("field-unit"),
@@ -487,23 +497,540 @@ function refreshDrawerLabels() {
 function fillSupplierOptions(selectedIds) {
     const box = document.getElementById("supplier-options");
     box.replaceChildren();
-    state.suppliers.forEach((supplier) => {
-        const label = document.createElement("label");
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.value = String(supplier.id);
-        input.checked = selectedIds.has(supplier.id);
-        const text = document.createElement("span");
-        text.textContent = supplier.is_active ? supplier.name : `${supplier.name} (${t("inactive")})`;
-        label.append(input, text);
-        box.appendChild(label);
-    });
+    state.suppliers
+        .filter((supplier) => supplier.is_active || selectedIds.has(supplier.id))
+        .forEach((supplier) => {
+            const label = document.createElement("label");
+            const input = document.createElement("input");
+            input.type = "checkbox";
+            input.value = String(supplier.id);
+            input.checked = selectedIds.has(supplier.id);
+            const text = document.createElement("span");
+            text.textContent = supplier.is_active
+                ? supplier.name
+                : `${supplier.name} (${t("inactive")})`;
+            label.append(input, text);
+            box.appendChild(label);
+        });
 }
 
 function closeDrawer() {
     document.getElementById("drawer").hidden = true;
     document.getElementById("drawer-backdrop").hidden = true;
     state.editingId = null;
+}
+
+function firstActiveFamilyId() {
+    const family = state.families.find((item) => item.is_active);
+    return family ? family.id : null;
+}
+
+function sortFamilies() {
+    state.families.sort((left, right) =>
+        left.name.localeCompare(right.name, currentLang(), { sensitivity: "base" })
+    );
+}
+
+function replaceFamily(family) {
+    const index = state.families.findIndex((item) => item.id === family.id);
+    if (index === -1) {
+        state.families.push(family);
+    } else {
+        state.families[index] = family;
+    }
+    sortFamilies();
+    state.products.forEach((product) => {
+        if (product.family.id === family.id) {
+            product.family = {
+                id: family.id,
+                name: family.name,
+                is_active: family.is_active,
+            };
+        }
+    });
+    fillFilterOptions();
+    fillFormLookups();
+    renderTable();
+    renderFamilyTable();
+}
+
+function closeFamilyDrawer() {
+    document.getElementById("family-drawer").hidden = true;
+    document.getElementById("family-drawer-backdrop").hidden = true;
+}
+
+async function openFamilyDrawer() {
+    closeDrawer();
+    closeSupplierDrawer();
+    document.getElementById("family-drawer").hidden = false;
+    document.getElementById("family-drawer-backdrop").hidden = false;
+    try {
+        const data = await api(FAMILY_API);
+        state.families = data.families;
+        sortFamilies();
+        fillFilterOptions();
+        fillFormLookups();
+        renderFamilyTable();
+    } catch (error) {
+        showBanner(error.message, true);
+        renderFamilyTable();
+    }
+}
+
+function renderFamilyTable() {
+    const body = document.getElementById("family-table-body");
+    if (!body) {
+        return;
+    }
+    body.replaceChildren();
+    if (!state.families.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 4;
+        cell.className = "empty-row";
+        cell.textContent = t("emptyFamilies");
+        row.appendChild(cell);
+        body.appendChild(row);
+        return;
+    }
+    state.families.forEach((family) => {
+        const row = document.createElement("tr");
+        if (!family.is_active) {
+            row.classList.add("is-inactive");
+        }
+
+        const name = document.createElement("td");
+        name.textContent = family.name;
+
+        const count = document.createElement("td");
+        count.textContent = String(family.product_count ?? 0);
+
+        const status = document.createElement("td");
+        const pill = document.createElement("span");
+        pill.className = family.is_active ? "pill pill-ok" : "pill pill-muted";
+        pill.textContent = family.is_active ? t("active") : t("inactive");
+        status.appendChild(pill);
+
+        const actions = document.createElement("td");
+        actions.className = "row-actions";
+        const lifecycle = document.createElement("button");
+        lifecycle.type = "button";
+        lifecycle.className = family.is_active ? "btn btn-danger" : "btn";
+        lifecycle.textContent = family.is_active ? t("deactivate") : t("reactivate");
+        lifecycle.addEventListener("click", () => toggleFamilyActive(family));
+        actions.append(lifecycle);
+
+        row.append(name, count, status, actions);
+        body.appendChild(row);
+    });
+}
+
+function askFamilyName(options) {
+    return new Promise((resolve) => {
+        const backdrop = document.getElementById("family-name-dialog-backdrop");
+        const dialog = document.getElementById("family-name-dialog");
+        const title = document.getElementById("family-name-dialog-title");
+        const help = document.getElementById("family-name-dialog-help");
+        const input = document.getElementById("family-name-input");
+        const error = document.getElementById("family-name-error");
+        const confirmButton = document.getElementById("family-name-confirm");
+        const cancelButton = document.getElementById("family-name-cancel");
+
+        title.textContent = t(options.titleKey);
+        if (options.helpKey) {
+            help.textContent = t(options.helpKey);
+            help.hidden = false;
+        } else {
+            help.hidden = true;
+        }
+        confirmButton.textContent = t(options.confirmKey || "save");
+        input.value = options.initial || "";
+        error.hidden = true;
+        backdrop.hidden = false;
+        dialog.hidden = false;
+        input.focus();
+        input.select();
+
+        function finish(value) {
+            backdrop.hidden = true;
+            dialog.hidden = true;
+            confirmButton.removeEventListener("click", onConfirm);
+            cancelButton.removeEventListener("click", onCancel);
+            backdrop.removeEventListener("click", onCancel);
+            input.removeEventListener("keydown", onKey);
+            resolve(value);
+        }
+
+        function onConfirm() {
+            const name = input.value.trim();
+            if (!name) {
+                error.textContent = t("family_name_required");
+                error.hidden = false;
+                input.focus();
+                return;
+            }
+            finish(name);
+        }
+
+        function onCancel() {
+            finish(null);
+        }
+
+        function onKey(event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                onConfirm();
+            }
+            if (event.key === "Escape") {
+                onCancel();
+            }
+        }
+
+        confirmButton.addEventListener("click", onConfirm);
+        cancelButton.addEventListener("click", onCancel);
+        backdrop.addEventListener("click", onCancel);
+        input.addEventListener("keydown", onKey);
+    });
+}
+
+async function promptCreateFamily(showHelp) {
+    const name = await askFamilyName({
+        titleKey: "familyCreateTitle",
+        confirmKey: "save",
+        helpKey: showHelp ? "familyCreateHelp" : null,
+    });
+    if (name === null) {
+        return null;
+    }
+    try {
+        const data = await api(FAMILY_API, {
+            method: "POST",
+            body: JSON.stringify({ name }),
+        });
+        replaceFamily(data.family);
+        showBanner(t("familyCreated"));
+        return data.family;
+    } catch (error) {
+        showBanner(error.message, true);
+        return null;
+    }
+}
+
+async function toggleFamilyActive(family) {
+    if (family.is_active && !window.confirm(t("confirmDeactivateFamily"))) {
+        return;
+    }
+    try {
+        const data = await api(`${FAMILY_API}${family.id}/`, {
+            method: "PATCH",
+            body: JSON.stringify({ is_active: !family.is_active }),
+        });
+        replaceFamily(data.family);
+        showBanner(t("familySaved"));
+    } catch (error) {
+        showBanner(error.message, true);
+    }
+}
+
+async function startNewProduct() {
+    const activeId = firstActiveFamilyId();
+    if (activeId) {
+        await openDrawer(null, activeId);
+        return;
+    }
+    const family = await promptCreateFamily(true);
+    if (!family) {
+        return;
+    }
+    await openDrawer(null, family.id);
+}
+
+async function createFamilyFromProductForm() {
+    const family = await promptCreateFamily(false);
+    if (!family) {
+        return;
+    }
+    document.getElementById("field-family").value = String(family.id);
+}
+
+function selectedSupplierIdsFromForm() {
+    return new Set(
+        [...document.querySelectorAll("#supplier-options input:checked")].map((input) =>
+            Number(input.value)
+        )
+    );
+}
+
+function supplierContactLabel(supplier) {
+    return supplier.contact_name || supplier.email || supplier.phone || t("none");
+}
+
+function sortSuppliers() {
+    state.suppliers.sort((left, right) =>
+        left.name.localeCompare(right.name, currentLang(), { sensitivity: "base" })
+    );
+}
+
+function replaceSupplier(supplier) {
+    const index = state.suppliers.findIndex((item) => item.id === supplier.id);
+    if (index === -1) {
+        state.suppliers.push(supplier);
+    } else {
+        state.suppliers[index] = supplier;
+    }
+    sortSuppliers();
+    state.products.forEach((product) => {
+        product.suppliers = product.suppliers.map((item) =>
+            item.id === supplier.id
+                ? {
+                      id: supplier.id,
+                      name: supplier.name,
+                      contact_name: supplier.contact_name,
+                      email: supplier.email,
+                      phone: supplier.phone,
+                      notes: supplier.notes,
+                      is_active: supplier.is_active,
+                  }
+                : item
+        );
+    });
+    const productDrawerOpen = !document.getElementById("drawer").hidden;
+    if (productDrawerOpen) {
+        fillSupplierOptions(selectedSupplierIdsFromForm());
+    }
+    renderTable();
+    renderSupplierTable();
+}
+
+function closeSupplierDrawer() {
+    document.getElementById("supplier-drawer").hidden = true;
+    document.getElementById("supplier-drawer-backdrop").hidden = true;
+}
+
+async function openSupplierDrawer() {
+    closeDrawer();
+    closeFamilyDrawer();
+    document.getElementById("supplier-drawer").hidden = false;
+    document.getElementById("supplier-drawer-backdrop").hidden = false;
+    try {
+        const data = await api(SUPPLIER_API);
+        state.suppliers = data.suppliers;
+        sortSuppliers();
+        renderSupplierTable();
+        if (!document.getElementById("drawer").hidden) {
+            fillSupplierOptions(selectedSupplierIdsFromForm());
+        }
+    } catch (error) {
+        showBanner(error.message, true);
+        renderSupplierTable();
+    }
+}
+
+function renderSupplierTable() {
+    const body = document.getElementById("supplier-table-body");
+    if (!body) {
+        return;
+    }
+    body.replaceChildren();
+    if (!state.suppliers.length) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 5;
+        cell.className = "empty-row";
+        cell.textContent = t("emptySuppliers");
+        row.appendChild(cell);
+        body.appendChild(row);
+        return;
+    }
+    state.suppliers.forEach((supplier) => {
+        const row = document.createElement("tr");
+        if (!supplier.is_active) {
+            row.classList.add("is-inactive");
+        }
+
+        const name = document.createElement("td");
+        name.textContent = supplier.name;
+
+        const contact = document.createElement("td");
+        contact.textContent = supplierContactLabel(supplier);
+
+        const count = document.createElement("td");
+        count.textContent = String(supplier.product_count ?? 0);
+
+        const status = document.createElement("td");
+        const pill = document.createElement("span");
+        pill.className = supplier.is_active ? "pill pill-ok" : "pill pill-muted";
+        pill.textContent = supplier.is_active ? t("active") : t("inactive");
+        status.appendChild(pill);
+
+        const actions = document.createElement("td");
+        actions.className = "row-actions";
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.className = "btn";
+        edit.textContent = t("edit");
+        edit.addEventListener("click", () => editSupplier(supplier));
+        const lifecycle = document.createElement("button");
+        lifecycle.type = "button";
+        lifecycle.className = supplier.is_active ? "btn btn-danger" : "btn";
+        lifecycle.textContent = supplier.is_active ? t("deactivate") : t("reactivate");
+        lifecycle.addEventListener("click", () => toggleSupplierActive(supplier));
+        actions.append(edit, lifecycle);
+
+        row.append(name, contact, count, status, actions);
+        body.appendChild(row);
+    });
+}
+
+function supplierFormPayload() {
+    return {
+        name: document.getElementById("supplier-field-name").value.trim(),
+        contact_name: document.getElementById("supplier-field-contact").value.trim(),
+        email: document.getElementById("supplier-field-email").value.trim(),
+        phone: document.getElementById("supplier-field-phone").value.trim(),
+        notes: document.getElementById("supplier-field-notes").value.trim(),
+    };
+}
+
+function askSupplierForm(supplier) {
+    return new Promise((resolve) => {
+        const backdrop = document.getElementById("supplier-form-dialog-backdrop");
+        const dialog = document.getElementById("supplier-form-dialog");
+        const title = document.getElementById("supplier-form-title");
+        const help = document.getElementById("supplier-form-help");
+        const nameInput = document.getElementById("supplier-field-name");
+        const error = document.getElementById("supplier-form-error");
+        const confirmButton = document.getElementById("supplier-form-confirm");
+        const cancelButton = document.getElementById("supplier-form-cancel");
+        const isEdit = Boolean(supplier);
+
+        title.textContent = t(isEdit ? "supplierEditTitle" : "supplierCreateTitle");
+        help.hidden = isEdit;
+        nameInput.value = supplier ? supplier.name : "";
+        nameInput.disabled = isEdit;
+        document.getElementById("supplier-field-contact").value = supplier ? supplier.contact_name || "" : "";
+        document.getElementById("supplier-field-email").value = supplier ? supplier.email || "" : "";
+        document.getElementById("supplier-field-phone").value = supplier ? supplier.phone || "" : "";
+        document.getElementById("supplier-field-notes").value = supplier ? supplier.notes || "" : "";
+        error.hidden = true;
+        backdrop.hidden = false;
+        dialog.hidden = false;
+        if (isEdit) {
+            document.getElementById("supplier-field-contact").focus();
+        } else {
+            nameInput.focus();
+        }
+
+        function finish(value) {
+            backdrop.hidden = true;
+            dialog.hidden = true;
+            nameInput.disabled = false;
+            confirmButton.removeEventListener("click", onConfirm);
+            cancelButton.removeEventListener("click", onCancel);
+            backdrop.removeEventListener("click", onCancel);
+            nameInput.removeEventListener("keydown", onKey);
+            resolve(value);
+        }
+
+        function onConfirm() {
+            const payload = supplierFormPayload();
+            if (!payload.name) {
+                error.textContent = t("supplier_name_required");
+                error.hidden = false;
+                if (!isEdit) {
+                    nameInput.focus();
+                }
+                return;
+            }
+            finish(payload);
+        }
+
+        function onCancel() {
+            finish(null);
+        }
+
+        function onKey(event) {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                onConfirm();
+            }
+            if (event.key === "Escape") {
+                onCancel();
+            }
+        }
+
+        confirmButton.addEventListener("click", onConfirm);
+        cancelButton.addEventListener("click", onCancel);
+        backdrop.addEventListener("click", onCancel);
+        nameInput.addEventListener("keydown", onKey);
+    });
+}
+
+async function promptCreateSupplier() {
+    const payload = await askSupplierForm(null);
+    if (payload === null) {
+        return null;
+    }
+    try {
+        const data = await api(SUPPLIER_API, {
+            method: "POST",
+            body: JSON.stringify(payload),
+        });
+        replaceSupplier(data.supplier);
+        showBanner(t("supplierCreated"));
+        return data.supplier;
+    } catch (error) {
+        showBanner(error.message, true);
+        return null;
+    }
+}
+
+async function editSupplier(supplier) {
+    const payload = await askSupplierForm(supplier);
+    if (payload === null) {
+        return;
+    }
+    try {
+        const data = await api(`${SUPPLIER_API}${supplier.id}/`, {
+            method: "PATCH",
+            body: JSON.stringify({
+                contact_name: payload.contact_name,
+                email: payload.email,
+                phone: payload.phone,
+                notes: payload.notes,
+            }),
+        });
+        replaceSupplier(data.supplier);
+        showBanner(t("supplierSaved"));
+    } catch (error) {
+        showBanner(error.message, true);
+    }
+}
+
+async function toggleSupplierActive(supplier) {
+    if (supplier.is_active && !window.confirm(t("confirmDeactivateSupplier"))) {
+        return;
+    }
+    try {
+        const data = await api(`${SUPPLIER_API}${supplier.id}/`, {
+            method: "PATCH",
+            body: JSON.stringify({ is_active: !supplier.is_active }),
+        });
+        replaceSupplier(data.supplier);
+        showBanner(t("supplierSaved"));
+    } catch (error) {
+        showBanner(error.message, true);
+    }
+}
+
+async function createSupplierFromProductForm() {
+    const supplier = await promptCreateSupplier();
+    if (!supplier) {
+        return;
+    }
+    const selected = selectedSupplierIdsFromForm();
+    selected.add(supplier.id);
+    fillSupplierOptions(selected);
 }
 
 function formPayload() {
@@ -544,7 +1071,9 @@ async function loadHistory(productId) {
     });
 }
 
-async function openDrawer(product) {
+async function openDrawer(product, selectFamilyId) {
+    closeFamilyDrawer();
+    closeSupplierDrawer();
     fillFormLookups();
     document.getElementById("drawer").hidden = false;
     document.getElementById("drawer-backdrop").hidden = false;
@@ -560,8 +1089,9 @@ async function openDrawer(product) {
         document.getElementById("field-stock").value = "0";
         document.getElementById("field-price").value = "0.00";
         document.getElementById("field-reorder").value = "0";
-        if (state.families.length) {
-            document.getElementById("field-family").value = String(state.families[0].id);
+        const familyId = selectFamilyId || firstActiveFamilyId();
+        if (familyId) {
+            document.getElementById("field-family").value = String(familyId);
         }
         if (state.units.length) {
             document.getElementById("field-unit").value = state.units[0].value;
@@ -851,6 +1381,8 @@ async function loadCatalog() {
     fillFilterOptions();
     fillFormLookups();
     renderTable();
+    renderFamilyTable();
+    renderSupplierTable();
 }
 
 function bindEvents() {
@@ -875,7 +1407,21 @@ function bindEvents() {
         renderTable();
     });
     document.getElementById("bulk-apply").addEventListener("click", applyBulk);
-    document.getElementById("new-product").addEventListener("click", () => openDrawer(null));
+    document.getElementById("manage-families").addEventListener("click", () => {
+        openFamilyDrawer();
+    });
+    document.getElementById("manage-suppliers").addEventListener("click", () => {
+        openSupplierDrawer();
+    });
+    document.getElementById("new-product").addEventListener("click", () => startNewProduct());
+    document.getElementById("new-family").addEventListener("click", () => promptCreateFamily(false));
+    document.getElementById("new-family-inline").addEventListener("click", () => createFamilyFromProductForm());
+    document.getElementById("new-supplier").addEventListener("click", () => promptCreateSupplier());
+    document.getElementById("new-supplier-inline").addEventListener("click", () => createSupplierFromProductForm());
+    document.getElementById("family-drawer-close").addEventListener("click", closeFamilyDrawer);
+    document.getElementById("family-drawer-backdrop").addEventListener("click", closeFamilyDrawer);
+    document.getElementById("supplier-drawer-close").addEventListener("click", closeSupplierDrawer);
+    document.getElementById("supplier-drawer-backdrop").addEventListener("click", closeSupplierDrawer);
     document.getElementById("drawer-close").addEventListener("click", closeDrawer);
     document.getElementById("drawer-backdrop").addEventListener("click", closeDrawer);
     document.getElementById("product-form").addEventListener("submit", saveProduct);
@@ -885,7 +1431,7 @@ function bindEvents() {
             toggleLifecycle(product);
         }
     });
-    const sortableHead = document.querySelector(".grid thead");
+    const sortableHead = document.querySelector(".page .grid thead");
     if (sortableHead) {
         sortableHead.addEventListener("click", (event) => {
             const button = event.target.closest("th[data-sort] .sort-btn");

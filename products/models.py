@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class ProductQuerySet(models.QuerySet):
@@ -11,13 +12,19 @@ class ProductQuerySet(models.QuerySet):
 
 
 class ProductFamily(models.Model):
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                name="unique_productfamily_name_ci",
+            ),
+        ]
 
     def __str__(self):
         return self.name
@@ -85,6 +92,12 @@ class Supplier(models.Model):
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                name="unique_supplier_name_ci",
+            ),
+        ]
 
     def __str__(self):
         return self.name
