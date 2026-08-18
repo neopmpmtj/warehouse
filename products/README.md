@@ -1,5 +1,9 @@
 # CentCompras MVP
 
+> **Current status lives in the root [`README.md` → Project status](../README.md#project-status-handoff).** This file is a **historical build log** of how the catalogue and offline layer were first assembled. Do not treat the early sections (CLI-only insert, three-field `Product`, admin-only management) as the live app.
+>
+> **Live facts (August 2026):** warehouse staff manage products at `/manage/products/`; new products start inactive (Genesis); families and suppliers have console drawers and PostgreSQL audit logs; `GET /api/products/` returns active rows plus `catalog_updated_at`; Service Worker cache is `centcompras-shell-v5`. **Stock is still typed on the product.** Inbound receipts from suppliers are the next product-side design; branch orders wait. The branch page at `/` remains a scaffold until a dedicated UX session.
+
 A small **offline-capable warehouse product catalogue web app** built with:
 
 - Python

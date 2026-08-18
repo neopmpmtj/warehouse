@@ -1,6 +1,6 @@
 # CentCompras — Agent instructions
 
-Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branches**. Branch staff browse a product catalogue from a phone browser; **orders** are the next business phase.
+Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branches**. Branch staff browse a product catalogue from a phone browser. **Inbound stock** (supplier purchases → product quantity) is the next product-side design; **branch orders** wait until stock can be received.
 
 **Read [`README.md` → Project status (handoff)](README.md#project-status-handoff) first** for what is done vs pending.
 
@@ -8,18 +8,20 @@ Staff product console (this phase): [`docs/product-console-session-2026-08-18.md
 
 ## Session handoff (August 2026)
 
-**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), staff product console (`/manage/products/` — sort, inactive-by-default create, family/supplier drawers), family and supplier PostgreSQL audit logs, catalog polish, dev seed script with **warehouse user**.
+**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), staff product console (`/manage/products/` — sort, inactive-by-default create, family/supplier drawers), family and supplier PostgreSQL audit logs, catalog polish, dev seed script with **warehouse user**. Handoff docs synced 18 August 2026 (`aux_instructions.md`, tenancy preamble, this file, root README).
 
-**Not done:** `orders` app, offline order queue, integration tests for auth/branches, production OAuth/deployment.
+**Not done:** inbound stock / procurement app, `orders` app, offline order queue, shared page chrome, branch phone UX, console polish, integration tests for auth/branches, production OAuth/deployment.
 
-**Next:** Design order business rules, then implement `orders/` incrementally per [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md).
+**Next:** Design how a supplier purchase becomes `Product.stock`. Do **not** implement `orders/` or the tenancy-doc Order stub. Hold shared chrome, `/` restyle, and console polish for dedicated sessions.
+
+**Stock today:** `Product.stock` is still typed in the staff console. That is not a locked design.
 
 ## User roles (do not confuse these)
 
 | Role | Flag / model | Catalog | Orders (future) |
 |------|----------------|---------|-----------------|
-| Warehouse staff | `User.is_staff` | Manage via `/manage/products/` (and `/admin/products/`) | N/A (central) |
-| Branch admin/manager/user | `BranchMembership.role` | Read-only at `/` | Per-branch permissions in `branches/permissions.py` |
+| Warehouse staff | `User.is_staff` | Manage via `/manage/products/` (and `/admin/products/`); stock is still typed on the product | N/A (central) |
+| Branch admin/manager/user | `BranchMembership.role` | Read-only at `/` | Per-branch permissions in `branches/permissions.py` (after inbound stock) |
 | Django superuser | `is_superuser` | Only if also `is_staff` | Site config in `/admin/` |
 
 Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branch admins, password `devpass123`.
@@ -46,7 +48,7 @@ Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branc
 
 ### Catalogue
 
-- **Product fields:** family, optional `internal_code`, `description`, `stock`, `price`, `unit_of_measure`, `reorder_level`, `is_active` (new products start inactive), timestamps; suppliers via `ProductSupplier`
+- **Product fields:** family, optional `internal_code`, `description`, `stock` (still console-editable), `price`, `unit_of_measure`, `reorder_level`, `is_active` (new products start inactive), timestamps; suppliers via `ProductSupplier`
 - **Audit:** `ProductChangeLog`, `FamilyChangeLog`, `SupplierChangeLog` — who changed what (create / update / deactivate / reactivate). Product lifecycle reasons required; family/supplier deactivate is confirm-only
 - **Names:** family and supplier names are case-insensitive unique; the console does not rename them
 - **Global catalogue** — no `branch_id` on `Product` (warehouse stock for all branches)
@@ -67,8 +69,10 @@ PostgreSQL is the source of truth. IndexedDB is a read-only local cache.
 
 ## Not implemented yet
 
-- `orders` app and order workflow (**next phase**)
-- Order business rules locked (stock timing, cart shape, cancel policy)
+- Inbound stock / procurement (supplier receipt → `Product.stock`) — **next design**
+- `orders` app and order workflow (**after** inbound stock)
+- Order business rules not locked (stock timing, cart shape, cancel policy)
+- Shared page chrome; branch phone-catalogue UX; staff console polish (dedicated sessions)
 - Integration tests for auth, branch middleware, offline catalogue
 - Tests for `accounts` and `branches` (stubs only)
 - Google OAuth, public signup, password reset
@@ -119,5 +123,5 @@ Use one hostname consistently for offline testing (`localhost` or `127.0.0.1`, n
 ## Before large changes
 
 1. [`README.md`](README.md) — project status and scope
-2. [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) — Order model design (§6–7)
+2. [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) — tenancy (done); Order sketch §6–7 is **not** the next build
 3. [`products/products_docs/aux_instructions.md`](products/products_docs/aux_instructions.md) — development pace

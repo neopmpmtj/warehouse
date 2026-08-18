@@ -1,6 +1,14 @@
 # Warehouse App — Multi-Tenancy & Role Setup Instructions
 
-**Context:** Greenfield / early development. Database can be rebuilt from scratch — no data migration concerns. Existing functionality: a single "insert new row" feature (ID + 3 fields) to be replaced/extended by the `Order` model below.
+**Status (18 August 2026):** `accounts` and `branches` from this document **are built**. The product catalogue is a separate, completed module (`products/`, staff console at `/manage/products/`).
+
+**Do not implement §6–7 as written.** The `Order` example with `item_name` / `quantity` / `notes` was a placeholder from before `Product` existed. Branch orders are **on hold** until inbound stock can be recorded (warehouse purchases from suppliers → `Product.stock`). Order business rules (cart shape, stock decrement timing, cancel policy) are also not locked.
+
+`User.is_staff` is **warehouse catalogue staff** (and Django admin), not “site admin only”. Site-wide config is `is_superuser`. Branch roles (`BranchMembership`) do **not** grant catalogue edit.
+
+---
+
+**Original context (kept for history):** Greenfield / early development. Database can be rebuilt from scratch — no data migration concerns. Existing functionality: a single "insert new row" feature (ID + 3 fields) to be replaced/extended by the `Order` model below.
 
 **Stack:** Django, PostgreSQL, local dev on Ubuntu.
 
@@ -23,7 +31,7 @@ We are adding two things to the app:
 
 - A user's role is **not global** — it's attached to their membership in a *specific* branch. A user can belong to multiple branches with a different role in each (e.g. a regional manager).
 - Orders belong to exactly one branch. A branch only manages its own orders — no cross-branch ordering.
-- None of these roles are Django superuser. Django's built-in `is_superuser` / `is_staff` stay reserved for you (site-wide admin access via `/admin`), separate from this business-role system.
+- None of these roles are Django superuser. Django's built-in `is_superuser` stays reserved for site-wide `/admin/` configuration. **`is_staff` is warehouse catalogue staff** (`/manage/products/` and product admin), separate from this per-branch role system.
 
 ---
 
@@ -86,7 +94,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=150, blank=True)
     last_name = models.CharField(max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
-    is_staff = models.BooleanField(default=False)  # Django /admin access only
+    is_staff = models.BooleanField(default=False)  # warehouse catalogue + Django /admin
     date_joined = models.DateTimeField(auto_now_add=True)
 
     objects = UserManager()
@@ -173,7 +181,11 @@ One user can have multiple `BranchMembership` rows (one per branch), each with i
 
 ## 6. Order model (tenant-scoped business data)
 
-**`orders/models.py`**
+**Sketch only — do not copy this into an `orders` app.** CentCompras already has a global `Product` catalogue. A real order line would reference `Product` (and later snapshot description/price), not a free-text `item_name`. Branch orders wait until inbound stock exists so quantity is not ordered against an empty warehouse.
+
+The queryset helpers (`for_branch`, `for_user_branches`) and the `branch` + `created_by` FKs are still the right tenancy idea when orders are designed for real.
+
+**`orders/models.py`** (historical placeholder)
 
 ```python
 from django.conf import settings
@@ -339,3 +351,22 @@ Then via `/admin`:
 - No separate "regional" tenant tier — someone overseeing multiple branches is just multiple `BranchMembership` rows, not a new model.
 - No schema-per-tenant or database-per-tenant — unnecessary at ~500 users; shared table + `branch_id` FK with an index is sufficient.
 - No passwordless/magic-link login — plain email + password as specified.
+
+---
+
+## 11. Inbound stock (under discussion — not in this original brief)
+
+This document designed **branch-scoped outbound orders**. The catalogue now exists, and **stock is still a field typed on `Product`**.
+
+The intended next product-side slice (not built):
+
+```text
+Warehouse purchases from suppliers
+    → a receipt is recorded (who, which supplier, which products, quantities)
+    → Product.stock is updated from that receipt
+    → branch orders come later, against that stock
+```
+
+Do not add an `orders` app in order to “have somewhere to put stock”. Stock in is not a branch order. Naming (`procurement`, `purchases`, `receiving`) and whether the first slice is a full purchase order or a goods-receipt-only record are **not locked**. Agree that slice before coding.
+
+Keep catalogue identity (family, description, unit, price, `is_active`) in `products`. Keep movement of quantity in a dedicated app that calls `products/services.py` (or a new stock-adjustment helper there) so PostgreSQL stays the source of truth.
