@@ -24,9 +24,11 @@ from .services import (
     create_product_family,
     create_supplier,
     deactivate_product,
+    get_family_history,
     get_product_families,
     get_product_history,
     get_products,
+    get_supplier_history,
     get_suppliers,
     reactivate_product,
     update_product,
@@ -448,6 +450,7 @@ def manage_family_list(request):
         family = create_product_family(
             name=str(payload.get("name", "")),
             is_active=is_active,
+            user=request.user,
         )
     except (FamilyNameRequiredError, DuplicateFamilyNameError, ValidationError) as exc:
         return _family_error(exc)
@@ -476,7 +479,7 @@ def manage_family_detail(request, family_id):
             if not isinstance(payload["is_active"], bool):
                 raise ValidationError("is_active must be a boolean.")
             fields["is_active"] = payload["is_active"]
-        family = update_product_family(family, **fields)
+        family = update_product_family(family, user=request.user, **fields)
     except (FamilyNameRequiredError, DuplicateFamilyNameError, ValidationError) as exc:
         return _family_error(exc)
 
@@ -523,6 +526,7 @@ def manage_supplier_list(request):
             email=str(payload.get("email", "")),
             phone=str(payload.get("phone", "")),
             notes=str(payload.get("notes", "")),
+            user=request.user,
         )
     except (
         SupplierNameRequiredError,
@@ -561,7 +565,7 @@ def manage_supplier_detail(request, supplier_id):
             if not isinstance(payload["is_active"], bool):
                 raise ValidationError("is_active must be a boolean.")
             fields["is_active"] = payload["is_active"]
-        supplier = update_supplier(supplier, **fields)
+        supplier = update_supplier(supplier, user=request.user, **fields)
     except (
         SupplierNameRequiredError,
         DuplicateSupplierNameError,
@@ -576,3 +580,31 @@ def manage_supplier_detail(request, supplier_id):
         request.user.email,
     )
     return _supplier_response(supplier)
+
+
+@staff_required
+@require_GET
+def manage_family_history(request, family_id):
+    try:
+        family = ProductFamily.objects.get(pk=family_id)
+    except ProductFamily.DoesNotExist:
+        return _json_error("Family not found.", status=404)
+
+    entries = get_family_history(family)
+    return JsonResponse(
+        {"history": [_serialize_history_entry(entry) for entry in entries]}
+    )
+
+
+@staff_required
+@require_GET
+def manage_supplier_history(request, supplier_id):
+    try:
+        supplier = Supplier.objects.get(pk=supplier_id)
+    except Supplier.DoesNotExist:
+        return _json_error("Supplier not found.", status=404)
+
+    entries = get_supplier_history(supplier)
+    return JsonResponse(
+        {"history": [_serialize_history_entry(entry) for entry in entries]}
+    )

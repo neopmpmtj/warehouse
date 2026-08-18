@@ -4,7 +4,15 @@ from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.template.response import TemplateResponse
 
-from .models import Product, ProductChangeLog, ProductFamily, ProductSupplier, Supplier
+from .models import (
+    FamilyChangeLog,
+    Product,
+    ProductChangeLog,
+    ProductFamily,
+    ProductSupplier,
+    Supplier,
+    SupplierChangeLog,
+)
 from .permissions import can_manage_catalog
 from .services import (
     DuplicateFamilyNameError,
@@ -61,6 +69,34 @@ class ProductAdminForm(forms.ModelForm):
 
 class ProductChangeLogInline(admin.TabularInline):
     model = ProductChangeLog
+    extra = 0
+    can_delete = False
+    readonly_fields = ("user", "action", "reason", "changes", "created_at")
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+class FamilyChangeLogInline(admin.TabularInline):
+    model = FamilyChangeLog
+    extra = 0
+    can_delete = False
+    readonly_fields = ("user", "action", "reason", "changes", "created_at")
+    ordering = ("-created_at",)
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+class SupplierChangeLogInline(admin.TabularInline):
+    model = SupplierChangeLog
     extra = 0
     can_delete = False
     readonly_fields = ("user", "action", "reason", "changes", "created_at")
@@ -323,7 +359,7 @@ class SupplierAdmin(admin.ModelAdmin):
     list_filter = ("is_active",)
     search_fields = ("name", "contact_name", "email", "phone", "notes")
     readonly_fields = ("created_at", "updated_at")
-    inlines = (SupplierProductInline,)
+    inlines = (SupplierProductInline, SupplierChangeLogInline)
     fieldsets = (
         (
             None,
@@ -369,6 +405,7 @@ class SupplierAdmin(admin.ModelAdmin):
             if change:
                 update_supplier(
                     obj,
+                    user=request.user,
                     name=form.cleaned_data["name"],
                     contact_name=form.cleaned_data["contact_name"],
                     email=form.cleaned_data["email"],
@@ -383,6 +420,8 @@ class SupplierAdmin(admin.ModelAdmin):
                     email=form.cleaned_data["email"],
                     phone=form.cleaned_data["phone"],
                     notes=form.cleaned_data["notes"],
+                    is_active=form.cleaned_data["is_active"],
+                    user=request.user,
                 )
                 obj.pk = created.pk
         except DuplicateSupplierNameError as exc:
@@ -432,7 +471,7 @@ class ProductFamilyAdmin(admin.ModelAdmin):
     list_filter = ("is_active",)
     search_fields = ("name",)
     readonly_fields = ("created_at", "updated_at")
-    inlines = (ProductFamilyProductInline,)
+    inlines = (ProductFamilyProductInline, FamilyChangeLogInline)
     fieldsets = (
         (
             None,
@@ -474,6 +513,7 @@ class ProductFamilyAdmin(admin.ModelAdmin):
             if change:
                 update_product_family(
                     obj,
+                    user=request.user,
                     name=form.cleaned_data["name"],
                     is_active=form.cleaned_data["is_active"],
                 )
@@ -481,6 +521,7 @@ class ProductFamilyAdmin(admin.ModelAdmin):
                 created = create_product_family(
                     name=form.cleaned_data["name"],
                     is_active=form.cleaned_data["is_active"],
+                    user=request.user,
                 )
                 obj.pk = created.pk
         except DuplicateFamilyNameError as exc:
@@ -491,17 +532,8 @@ class ProductFamilyAdmin(admin.ModelAdmin):
         obj.refresh_from_db()
 
 
-@admin.register(ProductChangeLog)
-class ProductChangeLogAdmin(admin.ModelAdmin):
-    list_display = ("id", "product", "user", "action", "reason", "created_at")
+class _ReadOnlyChangeLogAdmin(admin.ModelAdmin):
     list_filter = ("action",)
-    search_fields = (
-        "product__description",
-        "product__internal_code",
-        "user__email",
-        "reason",
-    )
-    readonly_fields = ("product", "user", "action", "reason", "changes", "created_at")
     ordering = ("-created_at",)
 
     def has_module_permission(self, request):
@@ -518,3 +550,29 @@ class ProductChangeLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(ProductChangeLog)
+class ProductChangeLogAdmin(_ReadOnlyChangeLogAdmin):
+    list_display = ("id", "product", "user", "action", "reason", "created_at")
+    search_fields = (
+        "product__description",
+        "product__internal_code",
+        "user__email",
+        "reason",
+    )
+    readonly_fields = ("product", "user", "action", "reason", "changes", "created_at")
+
+
+@admin.register(FamilyChangeLog)
+class FamilyChangeLogAdmin(_ReadOnlyChangeLogAdmin):
+    list_display = ("id", "family", "user", "action", "reason", "created_at")
+    search_fields = ("family__name", "user__email", "reason")
+    readonly_fields = ("family", "user", "action", "reason", "changes", "created_at")
+
+
+@admin.register(SupplierChangeLog)
+class SupplierChangeLogAdmin(_ReadOnlyChangeLogAdmin):
+    list_display = ("id", "supplier", "user", "action", "reason", "created_at")
+    search_fields = ("supplier__name", "user__email", "reason")
+    readonly_fields = ("supplier", "user", "action", "reason", "changes", "created_at")

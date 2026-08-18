@@ -7,7 +7,14 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from branches.models import Branch, BranchMembership
-from products.models import Product, ProductChangeLog, ProductFamily, Supplier
+from products.models import (
+    FamilyChangeLog,
+    Product,
+    ProductChangeLog,
+    ProductFamily,
+    Supplier,
+    SupplierChangeLog,
+)
 from products.permissions import can_manage_catalog
 from products.seed_catalog_data import PRODUCTS
 from products.services import (
@@ -382,6 +389,58 @@ class ProductFamilyServiceTests(TestCase):
         self.assertEqual(updated.name, "Cement")
         self.assertFalse(updated.is_active)
 
+    def test_create_product_family_writes_audit_log(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            email="staff@example.com",
+            password="test-pass-123",
+            is_staff=True,
+        )
+
+        family = create_product_family("Cement", user=user)
+
+        log = family.change_logs.get(action=FamilyChangeLog.Action.CREATED)
+        self.assertEqual(log.user, user)
+        self.assertEqual(log.changes["name"], "Cement")
+        self.assertTrue(log.changes["is_active"])
+
+    def test_create_product_family_allows_null_user(self):
+        family = create_product_family("Cement")
+
+        log = family.change_logs.get(action=FamilyChangeLog.Action.CREATED)
+        self.assertIsNone(log.user)
+
+    def test_update_product_family_writes_updated_log(self):
+        family = create_product_family("Original")
+
+        update_product_family(family, name="Renamed")
+
+        log = family.change_logs.get(action=FamilyChangeLog.Action.UPDATED)
+        self.assertEqual(log.changes["name"]["old"], "Original")
+        self.assertEqual(log.changes["name"]["new"], "Renamed")
+
+    def test_deactivate_and_reactivate_family_write_lifecycle_logs(self):
+        family = create_product_family("Cement")
+
+        update_product_family(family, is_active=False)
+        deactivated = family.change_logs.get(action=FamilyChangeLog.Action.DEACTIVATED)
+        self.assertEqual(deactivated.changes, {})
+
+        update_product_family(family, is_active=True)
+        reactivated = family.change_logs.get(action=FamilyChangeLog.Action.REACTIVATED)
+        self.assertEqual(reactivated.changes, {})
+
+    def test_unchanged_family_update_does_not_write_audit_log(self):
+        family = create_product_family("Cement")
+
+        update_product_family(family, name="Cement", is_active=True)
+
+        self.assertEqual(family.change_logs.count(), 1)
+        self.assertEqual(
+            family.change_logs.get().action,
+            FamilyChangeLog.Action.CREATED,
+        )
+
 
 class ProductPermissionTests(TestCase):
     def setUp(self):
@@ -740,6 +799,60 @@ class SupplierServiceTests(ProductTestCaseMixin, TestCase):
     def test_create_supplier_rejects_invalid_email(self):
         with self.assertRaises(InvalidSupplierEmailError):
             create_supplier(name="BuildSupply Ltd", email="not-an-email")
+
+    def test_create_supplier_respects_is_active(self):
+        inactive = create_supplier(name="Inactive on create", is_active=False)
+
+        self.assertFalse(inactive.is_active)
+        self.assertEqual(get_suppliers(active_only=False).count(), 1)
+        self.assertEqual(get_suppliers().count(), 0)
+        self.assertEqual(inactive.change_logs.count(), 1)
+        log = inactive.change_logs.get(action=SupplierChangeLog.Action.CREATED)
+        self.assertFalse(log.changes["is_active"])
+
+    def test_create_supplier_writes_audit_log(self):
+        supplier = create_supplier(
+            name="BuildSupply Ltd",
+            phone="+351 210 000 001",
+            user=self.staff_user,
+        )
+
+        log = supplier.change_logs.get(action=SupplierChangeLog.Action.CREATED)
+        self.assertEqual(log.user, self.staff_user)
+        self.assertEqual(log.changes["name"], "BuildSupply Ltd")
+        self.assertEqual(log.changes["phone"], "+351 210 000 001")
+        self.assertTrue(log.changes["is_active"])
+
+    def test_update_supplier_writes_updated_log(self):
+        supplier = create_supplier(name="BuildSupply Ltd")
+
+        update_supplier(
+            supplier,
+            user=self.staff_user,
+            contact_name="Ana Ribeiro",
+            phone="+351 210 000 001",
+        )
+
+        log = supplier.change_logs.get(action=SupplierChangeLog.Action.UPDATED)
+        self.assertEqual(log.user, self.staff_user)
+        self.assertEqual(log.changes["contact_name"]["new"], "Ana Ribeiro")
+        self.assertEqual(log.changes["phone"]["new"], "+351 210 000 001")
+        self.assertNotIn("name", log.changes)
+
+    def test_deactivate_and_reactivate_supplier_write_lifecycle_logs(self):
+        supplier = create_supplier(name="BuildSupply Ltd")
+
+        update_supplier(supplier, is_active=False)
+        deactivated = supplier.change_logs.get(
+            action=SupplierChangeLog.Action.DEACTIVATED,
+        )
+        self.assertEqual(deactivated.changes, {})
+
+        update_supplier(supplier, is_active=True)
+        reactivated = supplier.change_logs.get(
+            action=SupplierChangeLog.Action.REACTIVATED,
+        )
+        self.assertEqual(reactivated.changes, {})
 
 
 class SupplierAdminAccessTests(TestCase):
@@ -1164,6 +1277,46 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    def test_console_family_create_and_deactivate_write_audit_history(self):
+        self.client.force_login(self.staff_user)
+
+        create_response = self.client.post(
+            reverse("manage_family_list"),
+            data=json.dumps({"name": "Pipes"}),
+            content_type="application/json",
+        )
+        family_id = create_response.json()["family"]["id"]
+
+        self.client.patch(
+            reverse("manage_family_detail", args=[family_id]),
+            data=json.dumps({"is_active": False}),
+            content_type="application/json",
+        )
+
+        history = self.client.get(
+            reverse("manage_family_history", args=[family_id]),
+        )
+        self.assertEqual(history.status_code, 200)
+        by_action = {entry["action"]: entry for entry in history.json()["history"]}
+        self.assertEqual(set(by_action), {"created", "deactivated"})
+        self.assertEqual(by_action["created"]["user_email"], self.staff_user.email)
+
+        family = ProductFamily.objects.get(pk=family_id)
+        self.assertEqual(
+            family.change_logs.get(action=FamilyChangeLog.Action.CREATED).user,
+            self.staff_user,
+        )
+
+    def test_branch_user_cannot_use_family_history_api(self):
+        family = self.create_test_family("Pipes")
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(
+            reverse("manage_family_history", args=[family.id]),
+        )
+
+        self.assertEqual(response.status_code, 403)
+
     def test_staff_can_create_supplier_through_console_api(self):
         self.client.force_login(self.staff_user)
 
@@ -1273,5 +1426,43 @@ class ProductConsoleTests(ProductTestCaseMixin, TestCase):
         self.client.force_login(self.branch_user)
 
         response = self.client.get(reverse("manage_supplier_list"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_console_supplier_create_and_update_write_audit_history(self):
+        self.client.force_login(self.staff_user)
+
+        create_response = self.client.post(
+            reverse("manage_supplier_list"),
+            data=json.dumps({
+                "name": "BuildSupply Ltd",
+                "phone": "+351 210 000 001",
+            }),
+            content_type="application/json",
+        )
+        supplier_id = create_response.json()["supplier"]["id"]
+
+        self.client.patch(
+            reverse("manage_supplier_detail", args=[supplier_id]),
+            data=json.dumps({"contact_name": "Ana Ribeiro"}),
+            content_type="application/json",
+        )
+
+        history = self.client.get(
+            reverse("manage_supplier_history", args=[supplier_id]),
+        )
+        self.assertEqual(history.status_code, 200)
+        by_action = {entry["action"]: entry for entry in history.json()["history"]}
+        self.assertEqual(set(by_action), {"created", "updated"})
+        self.assertEqual(by_action["created"]["user_email"], self.staff_user.email)
+        self.assertEqual(by_action["created"]["changes"]["name"], "BuildSupply Ltd")
+
+    def test_branch_user_cannot_use_supplier_history_api(self):
+        supplier = create_supplier(name="BuildSupply Ltd")
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(
+            reverse("manage_supplier_history", args=[supplier.id]),
+        )
 
         self.assertEqual(response.status_code, 403)

@@ -16,6 +16,11 @@ urlpatterns = [
         name="manage_family_detail",
     ),
     path(
+        "manage/families/<int:family_id>/history/",
+        console_views.manage_family_history,
+        name="manage_family_history",
+    ),
+    path(
         "manage/suppliers/",
         console_views.manage_supplier_list,
         name="manage_supplier_list",
@@ -24,6 +29,11 @@ urlpatterns = [
         "manage/suppliers/<int:supplier_id>/",
         console_views.manage_supplier_detail,
         name="manage_supplier_detail",
+    ),
+    path(
+        "manage/suppliers/<int:supplier_id>/history/",
+        console_views.manage_supplier_history,
+        name="manage_supplier_history",
     ),
     path(
         "manage/products/",

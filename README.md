@@ -12,7 +12,7 @@ This repository is an early-stage MVP built incrementally: one concept per phase
 
 ### Where we stand
 
-The **catalogue module is complete** for the current MVP scope: global products, warehouse-staff management with audit trail, branch read-only browsing (online + offline), and local dev seed data. The **next business phase is orders** — nothing in `orders/` exists yet.
+The **catalogue module is complete** for the current MVP scope: global products, warehouse-staff management with audit trail (products, families, and suppliers), branch read-only browsing (online + offline), and local dev seed data. The **next business phase is orders** — nothing in `orders/` exists yet.
 
 ### Completed
 
@@ -22,9 +22,10 @@ The **catalogue module is complete** for the current MVP scope: global products,
 | **Auth & tenancy foundation** | Done | `accounts` (email login), `branches` (Branch, BranchMembership, roles, middleware, picker) |
 | **Login-protected catalogue** | Done | `/` and `/api/products/` require session; API returns 401 when logged out |
 | **Centralized logging** | Done | `logging_utils` → rotating files in `logs/` |
-| **Catalog management & audit** | Done | `Product` lifecycle fields, `ProductChangeLog`, soft delete, staff admin via `products/services.py` |
-| **Catalog polish** | Done | `catalog_updated_at` in API + UI; duplicate `internal_code` validation; optional audit `reason`; 7 tests in `products/tests.py` |
-| **Staff product console** | Done | `/manage/products/` — warehouse staff table, filters, edit/deactivate, EN/PT-PT, light/dark |
+| **Catalog management & audit** | Done | Product / family / supplier lifecycle, `ProductChangeLog` + `FamilyChangeLog` + `SupplierChangeLog`, soft delete, staff admin via `products/services.py` |
+| **Catalog polish** | Done | `catalog_updated_at` in API + UI; duplicate `internal_code` validation; optional product audit `reason` |
+| **Staff product console** | Done | `/manage/products/` — table, filters, column sort, inactive-by-default create + Genesis, family/supplier drawers, EN/pt-PT, light/dark |
+| **Family & supplier priors** | Done | Console create/deactivate; case-insensitive unique names (no rename in the console); PostgreSQL audit logs |
 | **Dev seed script** | Done | [`scripts/seed_dev_data.sh`](scripts/seed_dev_data.sh) — branches, branch users, **warehouse user**, sample products |
 | **Project setup docs** | Done | Root README, `requirements.txt`, `config/settings.example.py`, `AGENTS.md`, `.cursor/` rules |
 
@@ -40,7 +41,7 @@ The **catalogue module is complete** for the current MVP scope: global products,
 
 | User type | Example (after seed) | Can do today |
 |-----------|----------------------|--------------|
-| **Warehouse staff** | `warehouse@centcompras.dev` | Add/edit/deactivate products in `/manage/products/` (and `/admin/products/`); audit log |
+| **Warehouse staff** | `warehouse@centcompras.dev` | Add/edit/deactivate products, families, and suppliers in `/manage/products/` (and `/admin/products/`); audit logs |
 | **Branch admin** | `admin.lisbon@centcompras.dev` | Log in, browse catalogue at `/` (read-only); future: orders in their branch |
 | **Branch manager / user** | (create in admin) | Same browse access; different order permissions later |
 | **Django superuser** | from `createsuperuser` | Site admin: users, branches, memberships — not the same as warehouse or branch admin unless you grant `is_staff` / memberships |
@@ -53,7 +54,7 @@ After `./scripts/seed_dev_data.sh`, all seeded users share password **`devpass12
 |------|----------|-------|
 | **Orders workflow** | **Next** | Model, API, cart, offline queue, idempotent sync — see [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 |
 | **Order business rules** | Before coding orders | Multi-line cart vs single line; stock decrement timing; cancel/edit policy — agree in design session first |
-| **Tests (accounts/branches)** | Later | `accounts/tests.py`, `branches/tests.py` still stubs; `products/tests.py` has 7 catalog tests |
+| **Tests (accounts/branches)** | Later | `accounts/tests.py`, `branches/tests.py` still stubs; `products/tests.py` covers catalogue + console |
 | **Integration tests** | Later | Full auth → branch middleware → catalogue API → offline flow |
 | **Google OAuth** | Production | `django-allauth` or similar |
 | **Public signup / password reset** | Later | |
@@ -63,27 +64,27 @@ After `./scripts/seed_dev_data.sh`, all seeded users share password **`devpass12
 
 ### Recommended next session
 
-1. Read this section, [User roles](#user-roles-important--practice-with-these), and the staff console session report: [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md).
+1. Read this section, [User roles](#user-roles-important--practice-with-these), and the staff console session reports: [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md), [sort + lifecycle](docs/product-console-session-2026-08-18-sort-lifecycle.md), [family + supplier](docs/product-console-session-2026-08-18-family-supplier.md), [family + supplier audit](docs/product-console-session-2026-08-18-family-supplier-audit.md).
 2. Fresh environment: `python manage.py migrate` then `./scripts/seed_dev_data.sh`.
-3. Practice: warehouse user → `/manage/products/`; branch user → `/` catalogue; deactivate a product (reason required) → confirm it disappears from branch API.
+3. Practice: warehouse user → `/manage/products/`; create a family if needed; new product starts inactive until Genesis; Families / Suppliers drawers show History. Branch user → `/` catalogue; deactivate a product (reason required) → confirm it disappears from branch API.
 4. Read [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) §6–7 and **agree order business rules** before implementing `orders/`.
 5. Implement **orders** incrementally: model → services → permissions → API → UI → offline queue.
 
 ### Key files (catalog — current module)
 
 ```text
-products/models.py           Product, ProductChangeLog
-products/services.py         create/update/deactivate/reactivate, get_products, get_catalog_updated_at
+products/models.py           Product, ProductFamily, Supplier, change-log models
+products/services.py         create/update/deactivate/reactivate, family/supplier, get_products
 products/permissions.py      can_manage_catalog (is_staff)
-products/admin.py            staff-only product admin + audit inline
+products/admin.py            staff-only admin + audit inlines
 products/views.py              GET /api/products/ (active only + catalog_updated_at)
-products/console_views.py      Staff console page + /api/manage/products/ mutations
+products/console_views.py      Staff console page + /api/manage/ products, families, suppliers
 products/tests.py              Catalog + console tests — run: python manage.py test products
 branches/management/commands/seed_dev_data.py
 scripts/seed_dev_data.sh       wrapper: migrate + seed
 ```
 
-Migrations: `products/0001_initial.py`, `products/0002_productchangelog_reason.py`. Run `migrate` after pull if schema changed.
+Migrations: `products/0001_initial.py` through `0005` (inactive-by-default, CI unique names, family/supplier audit). Run `migrate` after pull if schema changed.
 
 ### Development philosophy
 
@@ -132,10 +133,11 @@ Production will use Google OAuth (not implemented in dev — email/password logi
 
 ### Product catalogue (server)
 
-- `Product` model: optional `internal_code`, `description`, `stock` (decimal), `price` (USD), `is_active` (soft delete), timestamps.
-- `ProductChangeLog` — immutable audit trail (user, action, field diffs).
-- Service layer in [`products/services.py`](products/services.py): `create_product`, `update_product`, `deactivate_product`, `reactivate_product`, `get_products` (active only by default).
-- Warehouse staff manage products in `/admin/` (`products/permissions.py` — `is_staff` only).
+- `Product` model: required `family`, optional `internal_code`, `description`, `stock` (decimal), `price` (USD), `unit_of_measure`, `reorder_level`, `is_active` (soft delete; **new products start inactive**), timestamps.
+- `ProductFamily` / `Supplier` — family is required on create; suppliers are optional. Names are case-insensitive unique. Console does not rename them.
+- Audit: `ProductChangeLog`, `FamilyChangeLog`, `SupplierChangeLog` — who changed what (create / update / deactivate / reactivate). Product deactivate/reactivate require a reason; family/supplier lifecycle does not.
+- Service layer in [`products/services.py`](products/services.py): product, family, and supplier mutations.
+- Warehouse staff manage the catalogue in `/manage/products/` (`products/permissions.py` — `is_staff` only). Django admin remains available.
 - Dev/bootstrap CLI:
 
   ```bash
@@ -151,9 +153,9 @@ Production will use Google OAuth (not implemented in dev — email/password logi
 
   Response includes `catalog_updated_at` (ISO timestamp of the latest active product change) for offline stale-catalogue messaging.
 
-- `ProductChangeLog.reason` — optional staff note on create/update/deactivate/reactivate.
+- `ProductChangeLog.reason` — required for product deactivate/reactivate; optional on field edits. Family/supplier logs store an empty reason today.
 - Duplicate non-empty `internal_code` values are rejected with a clear validation error in admin and services.
-- Tests in [`products/tests.py`](products/tests.py) cover service diffs, active filtering, duplicate codes, and API metadata.
+- Tests in [`products/tests.py`](products/tests.py) cover service diffs, active filtering, uniqueness, console APIs, and audit logs.
 
 ### Product catalogue (browser)
 
@@ -169,12 +171,14 @@ Production will use Google OAuth (not implemented in dev — email/password logi
 |------|---------|
 | `/` | Product list page (login required) |
 | `/manage/products/` | Warehouse staff product console (`is_staff`) |
+| `/api/manage/products/` | Staff product JSON API (`is_staff`) |
+| `/api/manage/families/` | Staff family JSON API (`is_staff`) |
+| `/api/manage/suppliers/` | Staff supplier JSON API (`is_staff`) |
 | `/accounts/login/` | Email + password login |
 | `/accounts/logout/` | Log out |
 | `/branches/select/` | Choose active branch (multi-branch users) |
 | `/branches/no-access/` | Shown when user has no branch membership |
 | `/api/products/` | Catalogue JSON API (login required) |
-| `/api/manage/products/` | Staff catalogue JSON API (`is_staff`) |
 | `/service-worker.js` | Service Worker (served from root for correct scope) |
 | `/admin/` | Django admin |
 
@@ -396,6 +400,9 @@ Service Worker → caches HTML + JS (app shell, offline page load)
 
 - **Start here:** [Project status (handoff)](#project-status-handoff) in this file
 - [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md) — staff product console: request, stack, decisions, bugs fixed
+- [`docs/product-console-session-2026-08-18-sort-lifecycle.md`](docs/product-console-session-2026-08-18-sort-lifecycle.md) — column sort, inactive create, Genesis / activate / deactivate presets
+- [`docs/product-console-session-2026-08-18-family-supplier.md`](docs/product-console-session-2026-08-18-family-supplier.md) — family and supplier console priors
+- [`docs/product-console-session-2026-08-18-family-supplier-audit.md`](docs/product-console-session-2026-08-18-family-supplier-audit.md) — family/supplier PostgreSQL audit, History in drawers, leftover 1–3
 - [`products/README.md`](products/README.md) — catalogue MVP build log, offline behaviour, manual testing checklist
 - [`docs/warehouse-tenancy-setup.md`](docs/warehouse-tenancy-setup.md) — tenancy design; **§6–7** for Order model (next phase)
 - [`AGENTS.md`](AGENTS.md) — concise instructions for AI agents in Cursor
@@ -427,7 +434,7 @@ The following do **not** exist today. The [Project status](#project-status-hando
 
 ### Quality & operations
 
-- **Unit tests** — `products/tests.py` has catalog tests (7); `accounts/tests.py` and `branches/tests.py` still stubs
+- **Unit tests** — `products/tests.py` covers catalogue and console; `accounts/tests.py` and `branches/tests.py` still stubs
 - **Integration tests** — not started
 - Production deployment and HTTPS
 - PWA manifest / install prompt

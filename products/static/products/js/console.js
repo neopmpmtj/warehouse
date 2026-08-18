@@ -13,7 +13,14 @@ const state = {
     editingId: null,
     sortKey: null,
     sortDir: "asc",
+    familyHistoryId: null,
+    familyHistoryEntries: [],
+    supplierHistoryId: null,
+    supplierHistoryEntries: [],
 };
+
+let familyHistoryRequestId = 0;
+let supplierHistoryRequestId = 0;
 
 const NUMERIC_SORT_KEYS = new Set(["stock", "reorder_level", "price"]);
 
@@ -93,6 +100,7 @@ function setLanguage(lang) {
     renderFamilyTable();
     renderSupplierTable();
     refreshDrawerLabels();
+    refreshEntityHistoryLabels();
 }
 
 let bannerTimer = null;
@@ -557,6 +565,7 @@ function replaceFamily(family) {
 function closeFamilyDrawer() {
     document.getElementById("family-drawer").hidden = true;
     document.getElementById("family-drawer-backdrop").hidden = true;
+    resetFamilyHistory();
 }
 
 async function openFamilyDrawer() {
@@ -571,6 +580,7 @@ async function openFamilyDrawer() {
         fillFilterOptions();
         fillFormLookups();
         renderFamilyTable();
+        resetFamilyHistory();
     } catch (error) {
         showBanner(error.message, true);
         renderFamilyTable();
@@ -618,7 +628,12 @@ function renderFamilyTable() {
         lifecycle.className = family.is_active ? "btn btn-danger" : "btn";
         lifecycle.textContent = family.is_active ? t("deactivate") : t("reactivate");
         lifecycle.addEventListener("click", () => toggleFamilyActive(family));
-        actions.append(lifecycle);
+        const history = document.createElement("button");
+        history.type = "button";
+        history.className = "btn";
+        history.textContent = t("history");
+        history.addEventListener("click", () => loadFamilyHistory(family));
+        actions.append(lifecycle, history);
 
         row.append(name, count, status, actions);
         body.appendChild(row);
@@ -709,6 +724,9 @@ async function promptCreateFamily(showHelp) {
         });
         replaceFamily(data.family);
         showBanner(t("familyCreated"));
+        if (!document.getElementById("family-drawer").hidden) {
+            loadFamilyHistory(data.family);
+        }
         return data.family;
     } catch (error) {
         showBanner(error.message, true);
@@ -727,6 +745,9 @@ async function toggleFamilyActive(family) {
         });
         replaceFamily(data.family);
         showBanner(t("familySaved"));
+        if (state.familyHistoryId === family.id) {
+            loadFamilyHistory(data.family);
+        }
     } catch (error) {
         showBanner(error.message, true);
     }
@@ -805,6 +826,7 @@ function replaceSupplier(supplier) {
 function closeSupplierDrawer() {
     document.getElementById("supplier-drawer").hidden = true;
     document.getElementById("supplier-drawer-backdrop").hidden = true;
+    resetSupplierHistory();
 }
 
 async function openSupplierDrawer() {
@@ -817,6 +839,7 @@ async function openSupplierDrawer() {
         state.suppliers = data.suppliers;
         sortSuppliers();
         renderSupplierTable();
+        resetSupplierHistory();
         if (!document.getElementById("drawer").hidden) {
             fillSupplierOptions(selectedSupplierIdsFromForm());
         }
@@ -875,7 +898,12 @@ function renderSupplierTable() {
         lifecycle.className = supplier.is_active ? "btn btn-danger" : "btn";
         lifecycle.textContent = supplier.is_active ? t("deactivate") : t("reactivate");
         lifecycle.addEventListener("click", () => toggleSupplierActive(supplier));
-        actions.append(edit, lifecycle);
+        const history = document.createElement("button");
+        history.type = "button";
+        history.className = "btn";
+        history.textContent = t("history");
+        history.addEventListener("click", () => loadSupplierHistory(supplier));
+        actions.append(edit, lifecycle, history);
 
         row.append(name, contact, count, status, actions);
         body.appendChild(row);
@@ -978,6 +1006,9 @@ async function promptCreateSupplier() {
         });
         replaceSupplier(data.supplier);
         showBanner(t("supplierCreated"));
+        if (!document.getElementById("supplier-drawer").hidden) {
+            loadSupplierHistory(data.supplier);
+        }
         return data.supplier;
     } catch (error) {
         showBanner(error.message, true);
@@ -1002,6 +1033,9 @@ async function editSupplier(supplier) {
         });
         replaceSupplier(data.supplier);
         showBanner(t("supplierSaved"));
+        if (state.supplierHistoryId === supplier.id) {
+            loadSupplierHistory(data.supplier);
+        }
     } catch (error) {
         showBanner(error.message, true);
     }
@@ -1018,6 +1052,9 @@ async function toggleSupplierActive(supplier) {
         });
         replaceSupplier(data.supplier);
         showBanner(t("supplierSaved"));
+        if (state.supplierHistoryId === supplier.id) {
+            loadSupplierHistory(data.supplier);
+        }
     } catch (error) {
         showBanner(error.message, true);
     }
@@ -1050,17 +1087,15 @@ function formPayload() {
     };
 }
 
-async function loadHistory(productId) {
-    const list = document.getElementById("history-list");
+function fillHistoryList(list, entries) {
     list.replaceChildren();
-    const data = await api(`${API_ROOT}${productId}/history/`);
-    if (!data.history.length) {
+    if (!entries.length) {
         const item = document.createElement("li");
         item.textContent = t("noHistory");
         list.appendChild(item);
         return;
     }
-    data.history.forEach((entry) => {
+    entries.forEach((entry) => {
         const item = document.createElement("li");
         const actionKey = `action${entry.action.charAt(0).toUpperCase()}${entry.action.slice(1)}`;
         const when = new Date(entry.created_at).toLocaleString();
@@ -1069,6 +1104,139 @@ async function loadHistory(productId) {
         item.textContent = `${t(actionKey)} · ${who} · ${when}${reason}`;
         list.appendChild(item);
     });
+}
+
+async function loadHistory(productId) {
+    const list = document.getElementById("history-list");
+    const data = await api(`${API_ROOT}${productId}/history/`);
+    fillHistoryList(list, data.history);
+}
+
+function resetFamilyHistory() {
+    familyHistoryRequestId += 1;
+    state.familyHistoryId = null;
+    state.familyHistoryEntries = [];
+    const title = document.getElementById("family-history-title");
+    const hint = document.getElementById("family-history-hint");
+    const list = document.getElementById("family-history-list");
+    if (!title || !hint || !list) {
+        return;
+    }
+    title.textContent = t("history");
+    hint.hidden = false;
+    list.replaceChildren();
+}
+
+function resetSupplierHistory() {
+    supplierHistoryRequestId += 1;
+    state.supplierHistoryId = null;
+    state.supplierHistoryEntries = [];
+    const title = document.getElementById("supplier-history-title");
+    const hint = document.getElementById("supplier-history-hint");
+    const list = document.getElementById("supplier-history-list");
+    if (!title || !hint || !list) {
+        return;
+    }
+    title.textContent = t("history");
+    hint.hidden = false;
+    list.replaceChildren();
+}
+
+function showFamilyHistory(family) {
+    const title = document.getElementById("family-history-title");
+    const hint = document.getElementById("family-history-hint");
+    const list = document.getElementById("family-history-list");
+    if (!title || !hint || !list) {
+        return;
+    }
+    title.textContent = t("historyFor", { name: family.name });
+    hint.hidden = true;
+    fillHistoryList(list, state.familyHistoryEntries);
+}
+
+function showSupplierHistory(supplier) {
+    const title = document.getElementById("supplier-history-title");
+    const hint = document.getElementById("supplier-history-hint");
+    const list = document.getElementById("supplier-history-list");
+    if (!title || !hint || !list) {
+        return;
+    }
+    title.textContent = t("historyFor", { name: supplier.name });
+    hint.hidden = true;
+    fillHistoryList(list, state.supplierHistoryEntries);
+}
+
+async function loadFamilyHistory(family) {
+    const requestId = ++familyHistoryRequestId;
+    if (state.familyHistoryId !== family.id) {
+        state.familyHistoryEntries = [];
+    }
+    state.familyHistoryId = family.id;
+    showFamilyHistory(family);
+    try {
+        const data = await api(`${FAMILY_API}${family.id}/history/`);
+        if (requestId !== familyHistoryRequestId) {
+            return;
+        }
+        state.familyHistoryEntries = data.history;
+        showFamilyHistory(family);
+    } catch (error) {
+        if (requestId !== familyHistoryRequestId) {
+            return;
+        }
+        showBanner(error.message, true);
+    }
+}
+
+async function loadSupplierHistory(supplier) {
+    const requestId = ++supplierHistoryRequestId;
+    if (state.supplierHistoryId !== supplier.id) {
+        state.supplierHistoryEntries = [];
+    }
+    state.supplierHistoryId = supplier.id;
+    showSupplierHistory(supplier);
+    try {
+        const data = await api(`${SUPPLIER_API}${supplier.id}/history/`);
+        if (requestId !== supplierHistoryRequestId) {
+            return;
+        }
+        state.supplierHistoryEntries = data.history;
+        showSupplierHistory(supplier);
+    } catch (error) {
+        if (requestId !== supplierHistoryRequestId) {
+            return;
+        }
+        showBanner(error.message, true);
+    }
+}
+
+function refreshEntityHistoryLabels() {
+    if (state.familyHistoryId) {
+        const family = state.families.find((item) => item.id === state.familyHistoryId);
+        if (family) {
+            showFamilyHistory(family);
+        } else {
+            resetFamilyHistory();
+        }
+    } else {
+        const title = document.getElementById("family-history-title");
+        if (title) {
+            title.textContent = t("history");
+        }
+    }
+    if (state.supplierHistoryId) {
+        const supplier = state.suppliers.find((item) => item.id === state.supplierHistoryId);
+        if (supplier) {
+            showSupplierHistory(supplier);
+        } else {
+            resetSupplierHistory();
+        }
+    } else {
+        const title = document.getElementById("supplier-history-title");
+        if (title) {
+            title.textContent = t("history");
+        }
+    }
 }
 
 async function openDrawer(product, selectFamilyId) {
@@ -1448,6 +1616,7 @@ function bindEvents() {
 
 async function init() {
     applyStaticI18n();
+    refreshEntityHistoryLabels();
     bindEvents();
     try {
         await loadCatalog();

@@ -156,3 +156,65 @@ class ProductChangeLog(models.Model):
 
     def __str__(self):
         return f"{self.product_id} {self.action} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class FamilyChangeLog(models.Model):
+    class Action(models.TextChoices):
+        CREATED = "created", "Created"
+        UPDATED = "updated", "Updated"
+        DEACTIVATED = "deactivated", "Deactivated"
+        REACTIVATED = "reactivated", "Reactivated"
+
+    family = models.ForeignKey(
+        ProductFamily,
+        on_delete=models.PROTECT,
+        related_name="change_logs",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="family_change_logs",
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    changes = models.JSONField(default=dict)
+    reason = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.family_id} {self.action} @ {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class SupplierChangeLog(models.Model):
+    class Action(models.TextChoices):
+        CREATED = "created", "Created"
+        UPDATED = "updated", "Updated"
+        DEACTIVATED = "deactivated", "Deactivated"
+        REACTIVATED = "reactivated", "Reactivated"
+
+    supplier = models.ForeignKey(
+        Supplier,
+        on_delete=models.PROTECT,
+        related_name="change_logs",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supplier_change_logs",
+    )
+    action = models.CharField(max_length=20, choices=Action.choices)
+    changes = models.JSONField(default=dict)
+    reason = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.supplier_id} {self.action} @ {self.created_at:%Y-%m-%d %H:%M}"

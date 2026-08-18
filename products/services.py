@@ -7,7 +7,15 @@ from django.db.models import Max
 
 from logging_utils import get_logger
 
-from .models import Product, ProductChangeLog, ProductFamily, ProductSupplier, Supplier
+from .models import (
+    FamilyChangeLog,
+    Product,
+    ProductChangeLog,
+    ProductFamily,
+    ProductSupplier,
+    Supplier,
+    SupplierChangeLog,
+)
 
 logger = get_logger("centcompras.products")
 
@@ -342,6 +350,14 @@ def get_product_history(product):
     return product.change_logs.select_related("user").order_by("-created_at")
 
 
+def _action_for_field_changes(changes, action_cls):
+    if set(changes) == {"is_active"}:
+        if changes["is_active"]["new"] is False:
+            return action_cls.DEACTIVATED, {}
+        return action_cls.REACTIVATED, {}
+    return action_cls.UPDATED, changes
+
+
 FAMILY_UPDATABLE_FIELDS = ("name", "is_active")
 
 
@@ -375,25 +391,46 @@ def _save_family(family, update_fields=None):
         raise
 
 
-def create_product_family(name, is_active=True):
+def _log_family_change(family, user, action, changes, reason=""):
+    FamilyChangeLog.objects.create(
+        family=family,
+        user=user,
+        action=action,
+        changes=changes,
+        reason=(reason or "").strip(),
+    )
+
+
+@transaction.atomic
+def create_product_family(name, is_active=True, user=None):
     name = validate_family_name_available(name)
     family = ProductFamily(
         name=name,
         is_active=is_active,
     )
     _save_family(family, update_fields=None)
+    _log_family_change(
+        family,
+        user,
+        FamilyChangeLog.Action.CREATED,
+        {
+            "name": family.name,
+            "is_active": family.is_active,
+        },
+    )
 
     logger.info(
-        "Created product family id=%s name=%r",
+        "Created product family id=%s name=%r user=%s",
         family.id,
         family.name,
+        getattr(user, "email", None),
     )
 
     return family
 
 
 @transaction.atomic
-def update_product_family(family, **fields):
+def update_product_family(family, user=None, **fields):
     if not fields:
         return family
 
@@ -403,7 +440,7 @@ def update_product_family(family, **fields):
 
     family = ProductFamily.objects.select_for_update().get(pk=family.pk)
 
-    update_fields = []
+    changes = {}
     for field_name, new_value in fields.items():
         if field_name == "name":
             new_value = validate_family_name_available(
@@ -412,22 +449,35 @@ def update_product_family(family, **fields):
             )
         old_value = getattr(family, field_name)
         if old_value != new_value:
+            changes[field_name] = {
+                "old": _serialize_value(old_value),
+                "new": _serialize_value(new_value),
+            }
             setattr(family, field_name, new_value)
-            update_fields.append(field_name)
 
-    if not update_fields:
+    if not changes:
         return family
 
-    update_fields.append("updated_at")
-    _save_family(family, update_fields=update_fields)
+    _save_family(family, update_fields=[*changes.keys(), "updated_at"])
+    action, logged_changes = _action_for_field_changes(
+        changes,
+        FamilyChangeLog.Action,
+    )
+    _log_family_change(family, user, action, logged_changes)
 
     logger.info(
-        "Updated product family id=%s fields=%s",
+        "Updated product family id=%s action=%s fields=%s user=%s",
         family.id,
-        update_fields,
+        action,
+        list(changes.keys()),
+        getattr(user, "email", None),
     )
 
     return family
+
+
+def get_family_history(family):
+    return family.change_logs.select_related("user").order_by("-created_at")
 
 
 def get_product_families(active_only=True):
@@ -488,7 +538,26 @@ def _save_supplier(supplier, update_fields=None):
         raise
 
 
-def create_supplier(name, contact_name="", email="", phone="", notes=""):
+def _log_supplier_change(supplier, user, action, changes, reason=""):
+    SupplierChangeLog.objects.create(
+        supplier=supplier,
+        user=user,
+        action=action,
+        changes=changes,
+        reason=(reason or "").strip(),
+    )
+
+
+@transaction.atomic
+def create_supplier(
+    name,
+    contact_name="",
+    email="",
+    phone="",
+    notes="",
+    is_active=True,
+    user=None,
+):
     name = validate_supplier_name_available(name)
     supplier = Supplier(
         name=name,
@@ -496,21 +565,35 @@ def create_supplier(name, contact_name="", email="", phone="", notes=""):
         email=_normalize_supplier_email(email),
         phone=(phone or "").strip(),
         notes=(notes or "").strip(),
-        is_active=True,
+        is_active=bool(is_active),
     )
     _save_supplier(supplier, update_fields=None)
+    _log_supplier_change(
+        supplier,
+        user,
+        SupplierChangeLog.Action.CREATED,
+        {
+            "name": supplier.name,
+            "contact_name": supplier.contact_name,
+            "email": supplier.email,
+            "phone": supplier.phone,
+            "notes": supplier.notes,
+            "is_active": supplier.is_active,
+        },
+    )
 
     logger.info(
-        "Created supplier id=%s name=%r",
+        "Created supplier id=%s name=%r user=%s",
         supplier.id,
         supplier.name,
+        getattr(user, "email", None),
     )
 
     return supplier
 
 
 @transaction.atomic
-def update_supplier(supplier, **fields):
+def update_supplier(supplier, user=None, **fields):
     if not fields:
         return supplier
 
@@ -520,7 +603,7 @@ def update_supplier(supplier, **fields):
 
     supplier = Supplier.objects.select_for_update().get(pk=supplier.pk)
 
-    update_fields = []
+    changes = {}
     for field_name, new_value in fields.items():
         if field_name == "name":
             new_value = validate_supplier_name_available(
@@ -533,22 +616,35 @@ def update_supplier(supplier, **fields):
             new_value = (new_value or "").strip()
         old_value = getattr(supplier, field_name)
         if old_value != new_value:
+            changes[field_name] = {
+                "old": _serialize_value(old_value),
+                "new": _serialize_value(new_value),
+            }
             setattr(supplier, field_name, new_value)
-            update_fields.append(field_name)
 
-    if not update_fields:
+    if not changes:
         return supplier
 
-    update_fields.append("updated_at")
-    _save_supplier(supplier, update_fields=update_fields)
+    _save_supplier(supplier, update_fields=[*changes.keys(), "updated_at"])
+    action, logged_changes = _action_for_field_changes(
+        changes,
+        SupplierChangeLog.Action,
+    )
+    _log_supplier_change(supplier, user, action, logged_changes)
 
     logger.info(
-        "Updated supplier id=%s fields=%s",
+        "Updated supplier id=%s action=%s fields=%s user=%s",
         supplier.id,
-        update_fields,
+        action,
+        list(changes.keys()),
+        getattr(user, "email", None),
     )
 
     return supplier
+
+
+def get_supplier_history(supplier):
+    return supplier.change_logs.select_related("user").order_by("-created_at")
 
 
 def get_suppliers(active_only=True):

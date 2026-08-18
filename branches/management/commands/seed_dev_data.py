@@ -121,16 +121,24 @@ class Command(BaseCommand):
         if not options["skip_products"]:
             families_by_name = {}
             for family_data in FAMILIES:
-                family, created = ProductFamily.objects.get_or_create(
-                    name=family_data["name"],
+                existing = ProductFamily.objects.filter(name=family_data["name"]).first()
+                if existing:
+                    family = existing
+                    if family.is_active != family_data["is_active"]:
+                        update_product_family(
+                            family,
+                            is_active=family_data["is_active"],
+                        )
+                    families_by_name[family.name] = family
+                    self.stdout.write(f"Exists family: {family.name}")
+                    continue
+
+                family = create_product_family(
+                    family_data["name"],
+                    is_active=family_data["is_active"],
                 )
-                if not family_data["is_active"] and family.is_active:
-                    update_product_family(family, is_active=False)
-                elif family_data["is_active"] and not family.is_active:
-                    update_product_family(family, is_active=True)
                 families_by_name[family.name] = family
-                verb = "Created" if created else "Exists"
-                self.stdout.write(f"{verb} family: {family.name}")
+                self.stdout.write(f"Created family: {family.name}")
 
             suppliers_by_name = {}
             for supplier_data in SUPPLIERS:
@@ -152,9 +160,8 @@ class Command(BaseCommand):
                     email=supplier_data.get("email", ""),
                     phone=supplier_data.get("phone", ""),
                     notes=supplier_data.get("notes", ""),
+                    is_active=supplier_data["is_active"],
                 )
-                if not supplier_data["is_active"]:
-                    update_supplier(supplier, is_active=False)
                 suppliers_by_name[supplier.name] = supplier
                 self.stdout.write(
                     self.style.SUCCESS(f"Created supplier: {supplier.name}")
