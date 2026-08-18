@@ -4,9 +4,11 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 
 **Read [`README.md` → Project status (handoff)](README.md#project-status-handoff) first** for what is done vs pending.
 
+Staff product console (this phase): [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md) — request, stack, decisions, bugs.
+
 ## Session handoff (August 2026)
 
-**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), catalog polish (API `catalog_updated_at`, duplicate code validation, audit reason, tests), dev seed script with **warehouse user**.
+**Done:** Auth/tenancy, offline catalogue, catalog management (admin + audit + soft delete), staff product console (`/manage/products/`), catalog polish, dev seed script with **warehouse user**.
 
 **Not done:** `orders` app, offline order queue, integration tests for auth/branches, production OAuth/deployment.
 
@@ -16,7 +18,7 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 
 | Role | Flag / model | Catalog | Orders (future) |
 |------|----------------|---------|-----------------|
-| Warehouse staff | `User.is_staff` | Manage via `/admin/products/` | N/A (central) |
+| Warehouse staff | `User.is_staff` | Manage via `/manage/products/` (and `/admin/products/`) | N/A (central) |
 | Branch admin/manager/user | `BranchMembership.role` | Read-only at `/` | Per-branch permissions in `branches/permissions.py` |
 | Django superuser | `is_superuser` | Only if also `is_staff` | Site config in `/admin/` |
 
@@ -30,7 +32,7 @@ Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branc
 |-----|---------|
 | `accounts` | Custom `User` (email login), login/logout |
 | `branches` | `Branch`, `BranchMembership`, `permissions.py`, `ActiveBranchMiddleware`, branch picker, `seed_dev_data` command |
-| `products` | Catalogue model, service layer, API, CLI, offline web UI, staff admin, tests |
+| `products` | Catalogue model, service layer, API, CLI, offline web UI, staff admin, staff console, tests |
 | `logging_utils` | `get_logger("centcompras.<app>")`, rotating logs in `logs/` |
 
 ### Auth and tenancy
@@ -44,15 +46,15 @@ Dev seed: `./scripts/seed_dev_data.sh` → `warehouse@centcompras.dev` + 3 branc
 
 ### Catalogue
 
-- **Product fields:** optional `internal_code`, `description`, `stock` (decimal), `price` (USD), `is_active`, timestamps
+- **Product fields:** family, optional `internal_code`, `description`, `stock`, `price`, `unit_of_measure`, `reorder_level`, `is_active`, timestamps; suppliers via `ProductSupplier`
 - **Audit:** `ProductChangeLog` — who changed what (create / update / deactivate / reactivate), optional `reason`
 - **Global catalogue** — no `branch_id` on `Product` (warehouse stock for all branches)
-- **Management:** warehouse staff via Django admin (`is_staff`); all mutations through `products/services.py`
+- **Management:** warehouse staff via `/manage/products/` and Django admin (`is_staff`); all mutations through `products/services.py`
 - **Branch access:** read-only — `GET /api/products/` returns active products only plus `catalog_updated_at`
 - **Validation:** duplicate non-empty `internal_code` rejected in services/admin
 - **CLI:** `add_product` for dev/bootstrap (audit user is null); optional `--internal-code`
-- **Offline:** Service Worker (`centcompras-shell-v4`) + IndexedDB (read-only catalogue cache)
-- **Tests:** `python manage.py test products` (7 tests)
+- **Offline:** Service Worker (`centcompras-shell-v5`) + IndexedDB (read-only catalogue cache)
+- **Tests:** `.venv/bin/python manage.py test products`
 
 ### Logging
 

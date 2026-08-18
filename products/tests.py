@@ -1,6 +1,8 @@
+import json
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.test import Client, TestCase
 from django.urls import reverse
 
@@ -9,6 +11,7 @@ from products.models import Product, ProductChangeLog
 from products.permissions import can_manage_catalog
 from products.seed_catalog_data import PRODUCTS
 from products.services import (
+    DeactivateReasonRequiredError,
     DuplicateInternalCodeError,
     create_product,
     create_product_family,
@@ -22,6 +25,7 @@ from products.services import (
     get_suppliers_for_product,
     link_product_supplier,
     reactivate_product,
+    set_product_suppliers,
     unlink_product_supplier,
     update_product,
     update_product_family,
@@ -127,7 +131,7 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
     def test_get_products_active_only_excludes_deactivated(self):
         active = self.create_test_product(self.user, description="Active item")
         inactive = self.create_test_product(self.user, description="Inactive item")
-        deactivate_product(self.user, inactive)
+        deactivate_product(self.user, inactive, reason="Removed from catalogue")
 
         active_ids = list(get_products().values_list("id", flat=True))
         all_ids = list(get_products(active_only=False).values_list("id", flat=True))
@@ -206,12 +210,12 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
         self.assertEqual(get_catalog_updated_at(), first.updated_at)
         self.assertGreater(first.updated_at, second.updated_at)
 
-        deactivate_product(self.user, first)
+        deactivate_product(self.user, first, reason="Removed from catalogue")
         self.assertEqual(get_catalog_updated_at(), second.updated_at)
 
     def test_get_catalog_updated_at_is_none_when_no_active_products(self):
         product = self.create_test_product(self.user, description="Only item")
-        deactivate_product(self.user, product)
+        deactivate_product(self.user, product, reason="Removed from catalogue")
 
         self.assertIsNone(get_catalog_updated_at())
         self.assertEqual(get_products().count(), 0)
@@ -234,6 +238,31 @@ class ProductServiceTests(ProductTestCaseMixin, TestCase):
         reactivated_log = product.change_logs.latest("created_at")
         self.assertEqual(reactivated_log.action, ProductChangeLog.Action.REACTIVATED)
         self.assertEqual(reactivated_log.reason, "Back in stock")
+
+    def test_deactivate_product_requires_reason(self):
+        product = self.create_test_product(self.user, description="Needs a reason")
+
+        with self.assertRaises(DeactivateReasonRequiredError):
+            deactivate_product(self.user, product)
+
+        with self.assertRaises(DeactivateReasonRequiredError):
+            deactivate_product(self.user, product, reason="   ")
+
+        product.refresh_from_db()
+        self.assertTrue(product.is_active)
+
+    def test_deactivate_already_inactive_does_not_require_reason(self):
+        product = self.create_test_product(self.user, description="Already hidden")
+        deactivate_product(self.user, product, reason="End of line")
+
+        deactivate_product(self.user, product)
+
+        product.refresh_from_db()
+        self.assertFalse(product.is_active)
+        self.assertEqual(
+            product.change_logs.filter(action=ProductChangeLog.Action.DEACTIVATED).count(),
+            1,
+        )
 
 
 class ProductFamilyServiceTests(TestCase):
@@ -403,7 +432,7 @@ class ProductApiTests(ProductTestCaseMixin, TestCase):
             None,
             description="Was active",
         )
-        deactivate_product(None, inactive)
+        deactivate_product(None, inactive, reason="Removed from catalogue")
 
         response = self.client.get(reverse("product_list"))
 
@@ -419,7 +448,7 @@ class ProductApiTests(ProductTestCaseMixin, TestCase):
             None,
             description="Temporary item",
         )
-        deactivate_product(None, product)
+        deactivate_product(None, product, reason="Removed from catalogue")
 
         self.assertEqual(get_products().count(), 0)
 
@@ -500,6 +529,49 @@ class SupplierServiceTests(ProductTestCaseMixin, TestCase):
 
         self.assertEqual(get_suppliers_for_product(product).count(), 0)
 
+    def test_set_product_suppliers_replaces_links(self):
+        product = self.create_test_product(self.staff_user, description="Pipe")
+        first = create_supplier(name="BuildSupply Ltd")
+        second = create_supplier(name="Porto Materials Co")
+        third = create_supplier(name="National Cement Works")
+        link_product_supplier(product, first)
+        link_product_supplier(product, second)
+
+        set_product_suppliers(product, [second.id, third.id])
+
+        names = list(get_suppliers_for_product(product).values_list("name", flat=True))
+        self.assertEqual(names, ["National Cement Works", "Porto Materials Co"])
+
+    def test_update_product_locks_when_only_supplier_ids_change(self):
+        product = self.create_test_product(self.staff_user, description="Pipe")
+        first = create_supplier(name="BuildSupply Ltd")
+        second = create_supplier(name="Porto Materials Co")
+        set_product_suppliers(product, [first.id])
+
+        updated = update_product(
+            self.staff_user,
+            product,
+            supplier_ids=[second.id],
+        )
+
+        names = list(
+            get_suppliers_for_product(updated).values_list("name", flat=True)
+        )
+        self.assertEqual(names, ["Porto Materials Co"])
+        updated.refresh_from_db()
+        self.assertEqual(updated.description, "Pipe")
+
+    def test_create_product_rolls_back_when_supplier_ids_are_invalid(self):
+        with self.assertRaises(ValidationError):
+            self.create_test_product(
+                self.staff_user,
+                description="Should not persist",
+                internal_code="SVC-FAIL",
+                supplier_ids=[99999],
+            )
+
+        self.assertFalse(Product.objects.filter(internal_code="SVC-FAIL").exists())
+
     def test_get_products_for_supplier_returns_linked_products(self):
         product = self.create_test_product(
             self.staff_user,
@@ -569,3 +641,222 @@ class SupplierAdminAccessTests(TestCase):
         response = self.client.get(self.supplier_changelist_url)
 
         self.assertIn(response.status_code, (302, 403))
+
+
+class ProductConsoleTests(ProductTestCaseMixin, TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.staff_user = user_model.objects.create_user(
+            email="warehouse@example.com",
+            password="test-pass-123",
+            is_staff=True,
+        )
+        self.branch_user = user_model.objects.create_user(
+            email="branch@example.com",
+            password="test-pass-123",
+        )
+        branch = Branch.objects.create(name="Test Branch")
+        BranchMembership.objects.create(
+            user=self.branch_user,
+            branch=branch,
+            role=BranchMembership.Role.USER,
+        )
+        self.client = Client()
+        self.family = self.create_test_family()
+
+    def test_staff_without_branch_can_open_console(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(reverse("product_console"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "product-form")
+
+    def test_branch_user_cannot_open_console(self):
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(reverse("product_console"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_anonymous_user_is_redirected_to_login(self):
+        response = self.client.get(reverse("product_console"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/accounts/login/", response.url)
+
+    def test_staff_login_redirects_to_console(self):
+        response = self.client.post(
+            reverse("login"),
+            {"username": "warehouse@example.com", "password": "test-pass-123"},
+        )
+
+        self.assertRedirects(response, reverse("product_console"))
+
+    def test_branch_user_cannot_use_manage_api(self):
+        self.client.force_login(self.branch_user)
+
+        response = self.client.get(reverse("manage_product_list"))
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_staff_manage_api_includes_inactive_products(self):
+        active = self.create_test_product(self.staff_user, description="Visible")
+        inactive = self.create_test_product(self.staff_user, description="Hidden")
+        deactivate_product(self.staff_user, inactive, reason="Removed from catalogue")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.get(reverse("manage_product_list"))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        product_ids = [product["id"] for product in payload["products"]]
+        self.assertEqual(sorted(product_ids), sorted([active.id, inactive.id]))
+        self.assertIn("families", payload)
+        self.assertIn("suppliers", payload)
+
+    def test_staff_can_create_and_update_product_through_console_api(self):
+        self.client.force_login(self.staff_user)
+        supplier = create_supplier(name="BuildSupply Ltd")
+
+        create_response = self.client.post(
+            reverse("manage_product_list"),
+            data=json.dumps({
+                "family_id": self.family.id,
+                "description": "Console cement",
+                "stock": "12",
+                "price": "9.50",
+                "unit_of_measure": Product.UnitOfMeasure.KG,
+                "internal_code": "CON-1",
+                "reorder_level": "4",
+                "reason": "Added from console",
+                "supplier_ids": [supplier.id],
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(create_response.status_code, 200)
+        created = create_response.json()["product"]
+        product = Product.objects.get(pk=created["id"])
+        self.assertEqual(product.description, "Console cement")
+        self.assertEqual(product.product_suppliers.count(), 1)
+        self.assertEqual(
+            product.change_logs.latest("created_at").reason,
+            "Added from console",
+        )
+
+        update_response = self.client.patch(
+            reverse("manage_product_detail", args=[product.id]),
+            data=json.dumps({
+                "description": "Console cement updated",
+                "reason": "Corrected label",
+                "supplier_ids": [],
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(update_response.status_code, 200)
+        product.refresh_from_db()
+        self.assertEqual(product.description, "Console cement updated")
+        self.assertEqual(product.product_suppliers.count(), 0)
+        self.assertEqual(
+            product.change_logs.latest("created_at").reason,
+            "Corrected label",
+        )
+
+    def test_console_create_rolls_back_when_supplier_ids_are_invalid(self):
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_product_list"),
+            data=json.dumps({
+                "family_id": self.family.id,
+                "description": "Should not persist",
+                "stock": "1",
+                "price": "1.00",
+                "unit_of_measure": Product.UnitOfMeasure.PIECE,
+                "internal_code": "CON-FAIL",
+                "supplier_ids": [99999],
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Product.objects.filter(internal_code="CON-FAIL").exists())
+
+    def test_console_update_rolls_back_when_supplier_ids_are_invalid(self):
+        product = self.create_test_product(
+            self.staff_user,
+            description="Original label",
+            internal_code="CON-KEEP",
+        )
+        supplier = create_supplier(name="BuildSupply Ltd")
+        set_product_suppliers(product, [supplier.id])
+        self.client.force_login(self.staff_user)
+
+        response = self.client.patch(
+            reverse("manage_product_detail", args=[product.id]),
+            data=json.dumps({
+                "description": "Should not persist",
+                "supplier_ids": [99999],
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        product.refresh_from_db()
+        self.assertEqual(product.description, "Original label")
+        self.assertEqual(product.product_suppliers.count(), 1)
+
+    def test_staff_can_deactivate_through_console_api(self):
+        product = self.create_test_product(self.staff_user, description="To hide")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_product_deactivate", args=[product.id]),
+            data=json.dumps({"reason": "End of line"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        product.refresh_from_db()
+        self.assertFalse(product.is_active)
+        self.assertEqual(
+            product.change_logs.latest("created_at").action,
+            ProductChangeLog.Action.DEACTIVATED,
+        )
+
+    def test_console_deactivate_without_reason_is_rejected(self):
+        product = self.create_test_product(self.staff_user, description="To hide")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_product_deactivate", args=[product.id]),
+            data=json.dumps({"reason": ""}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.json()
+        self.assertEqual(payload["code"], "deactivate_reason_required")
+        product.refresh_from_db()
+        self.assertTrue(product.is_active)
+
+    def test_console_bulk_deactivate_without_reason_is_rejected(self):
+        product = self.create_test_product(self.staff_user, description="To hide")
+        self.client.force_login(self.staff_user)
+
+        response = self.client.post(
+            reverse("manage_product_bulk"),
+            data=json.dumps({
+                "action": "deactivate",
+                "ids": [product.id],
+                "reason": "",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "deactivate_reason_required")
+        product.refresh_from_db()
+        self.assertTrue(product.is_active)

@@ -1,6 +1,8 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.template.response import TemplateResponse
 
 from .models import Product, ProductChangeLog, ProductFamily, ProductSupplier, Supplier
 from .permissions import can_manage_catalog
@@ -222,8 +224,34 @@ class ProductAdmin(admin.ModelAdmin):
 
     @admin.action(description="Deactivate selected products")
     def deactivate_products(self, request, queryset):
-        for product in queryset:
-            deactivate_product(request.user, product)
+        if request.POST.get("confirm_deactivate"):
+            reason = request.POST.get("reason", "").strip()
+            if not reason:
+                self.message_user(
+                    request,
+                    "A reason is required to deactivate a product.",
+                    messages.ERROR,
+                )
+                return None
+            for product in queryset:
+                deactivate_product(request.user, product, reason=reason)
+            self.message_user(
+                request,
+                f"Deactivated {queryset.count()} product(s).",
+            )
+            return None
+
+        return TemplateResponse(
+            request,
+            "admin/products/deactivate_reason.html",
+            {
+                **self.admin_site.each_context(request),
+                "opts": self.model._meta,
+                "queryset": queryset,
+                "action_checkbox_name": ACTION_CHECKBOX_NAME,
+                "title": "Deactivate products",
+            },
+        )
 
     @admin.action(description="Reactivate selected products")
     def reactivate_products(self, request, queryset):

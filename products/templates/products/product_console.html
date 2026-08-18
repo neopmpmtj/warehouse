@@ -1,0 +1,179 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>Product console — CentCompras</title>
+    <script>
+        (function () {
+            var theme = localStorage.getItem("cc-theme") || "light";
+            var lang = localStorage.getItem("cc-lang") || "en";
+            document.documentElement.setAttribute("data-theme", theme);
+            document.documentElement.setAttribute("lang", lang);
+        })();
+    </script>
+    <link rel="stylesheet" href="{% static 'products/css/console.css' %}">
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-title">
+            <p class="eyebrow" data-i18n="eyebrow">CentCompras</p>
+            <h1 data-i18n="title">Product console</h1>
+        </div>
+        <div class="topbar-actions">
+            <p class="user-line">
+                <span data-i18n="signedInAs">Signed in as</span>
+                <strong>{{ user.email }}</strong>
+            </p>
+            <label class="control-inline">
+                <span data-i18n="language">Language</span>
+                <select id="language-select" aria-label="Language">
+                    <option value="en">English</option>
+                    <option value="pt-PT">Português</option>
+                </select>
+            </label>
+            <button type="button" id="theme-toggle" class="btn btn-ghost"></button>
+            <form method="post" action="{% url 'logout' %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-ghost" data-i18n="signOut">Sign out</button>
+            </form>
+        </div>
+    </header>
+
+    <main class="page">
+        <section class="toolbar" aria-label="Filters">
+            <input
+                type="search"
+                id="search-input"
+                class="search-input"
+                data-i18n-placeholder="searchPlaceholder"
+                placeholder="Search code or description"
+            >
+            <select id="family-filter"></select>
+            <select id="status-filter">
+                <option value="all" data-i18n="allStatuses">All statuses</option>
+                <option value="active" data-i18n="active">Active</option>
+                <option value="inactive" data-i18n="inactive">Inactive</option>
+            </select>
+            <select id="unit-filter"></select>
+            <label class="check-inline">
+                <input type="checkbox" id="low-stock-filter">
+                <span data-i18n="lowStockOnly">Below reorder level</span>
+            </label>
+            <div class="toolbar-spacer"></div>
+            <select id="bulk-action">
+                <option value="" data-i18n="bulkAction">Bulk action</option>
+                <option value="deactivate" data-i18n="bulkDeactivate">Deactivate</option>
+                <option value="reactivate" data-i18n="bulkReactivate">Reactivate</option>
+            </select>
+            <button type="button" id="bulk-apply" class="btn" data-i18n="apply">Apply</button>
+            <button type="button" id="new-product" class="btn btn-primary" data-i18n="newProduct">New product</button>
+        </section>
+
+        <p id="result-count" class="result-count"></p>
+        <p id="banner" class="banner" hidden></p>
+
+        <div class="table-wrap">
+            <table class="grid">
+                <thead>
+                    <tr>
+                        <th class="col-check">
+                            <input type="checkbox" id="select-all" aria-label="Select all">
+                        </th>
+                        <th data-i18n="colCode">Code</th>
+                        <th data-i18n="colDescription">Description</th>
+                        <th data-i18n="colFamily">Family</th>
+                        <th data-i18n="colStock">Stock</th>
+                        <th data-i18n="colUnit">Unit</th>
+                        <th data-i18n="colReorder">Reorder</th>
+                        <th data-i18n="colPrice">Price</th>
+                        <th data-i18n="colSuppliers">Suppliers</th>
+                        <th data-i18n="colStatus">Status</th>
+                        <th data-i18n="colActions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="product-table-body"></tbody>
+            </table>
+        </div>
+    </main>
+
+    <div id="drawer-backdrop" class="backdrop" hidden></div>
+    <aside id="drawer" class="drawer" hidden>
+        <div class="drawer-head">
+            <h2 id="drawer-title"></h2>
+            <button type="button" id="drawer-close" class="btn btn-ghost" data-i18n="close">Close</button>
+        </div>
+        <form id="product-form" class="drawer-body">
+            <input type="hidden" id="field-id">
+            <label>
+                <span data-i18n="internalCode">Internal code</span>
+                <input type="text" id="field-internal-code" maxlength="64">
+            </label>
+            <label>
+                <span data-i18n="description">Description</span>
+                <input type="text" id="field-description" maxlength="255" required>
+            </label>
+            <label>
+                <span data-i18n="family">Family</span>
+                <select id="field-family" required></select>
+            </label>
+            <div class="field-row">
+                <label>
+                    <span data-i18n="stock">Stock</span>
+                    <input type="number" id="field-stock" step="0.001" required>
+                </label>
+                <label>
+                    <span data-i18n="unit">Unit</span>
+                    <select id="field-unit" required></select>
+                </label>
+            </div>
+            <div class="field-row">
+                <label>
+                    <span data-i18n="reorderLevel">Reorder level</span>
+                    <input type="number" id="field-reorder" step="0.001" required>
+                </label>
+                <label>
+                    <span data-i18n="price">Price (USD)</span>
+                    <input type="number" id="field-price" step="0.01" required>
+                </label>
+            </div>
+            <fieldset>
+                <legend data-i18n="suppliers">Suppliers</legend>
+                <div id="supplier-options" class="checkbox-list"></div>
+            </fieldset>
+            <label>
+                <span data-i18n="reason">Reason (optional)</span>
+                <input type="text" id="field-reason" maxlength="255" data-i18n-placeholder="reasonHint" placeholder="Why is this changing?">
+            </label>
+            <div class="drawer-actions">
+                <button type="submit" class="btn btn-primary" data-i18n="save">Save</button>
+                <button type="button" id="drawer-lifecycle" class="btn btn-danger"></button>
+            </div>
+            <section class="history">
+                <h3 data-i18n="history">History</h3>
+                <ol id="history-list"></ol>
+            </section>
+        </form>
+    </aside>
+
+    <div id="reason-dialog-backdrop" class="backdrop dialog-backdrop" hidden></div>
+    <div id="reason-dialog" class="dialog" hidden>
+        <h2 data-i18n="deactivateReasonTitle">Reason required</h2>
+        <p data-i18n="deactivateReasonHelp">Explain why this product is leaving the catalogue.</p>
+        <label>
+            <span data-i18n="deactivateReasonLabel">Reason</span>
+            <textarea id="deactivate-reason-input" maxlength="255" rows="3" required></textarea>
+        </label>
+        <p id="deactivate-reason-error" class="field-error" hidden></p>
+        <div class="drawer-actions">
+            <button type="button" id="deactivate-reason-confirm" class="btn btn-danger" data-i18n="deactivate">Deactivate</button>
+            <button type="button" id="deactivate-reason-cancel" class="btn" data-i18n="cancel">Cancel</button>
+        </div>
+    </div>
+
+    <script src="{% static 'products/js/console_i18n.js' %}"></script>
+    <script src="{% static 'products/js/console.js' %}"></script>
+</body>
+</html>

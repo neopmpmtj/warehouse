@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
@@ -26,6 +26,14 @@ class DuplicateInternalCodeError(ValidationError):
         super().__init__(
             f'Internal code "{internal_code}" is already used by another product.',
             code="duplicate_internal_code",
+        )
+
+
+class DeactivateReasonRequiredError(ValidationError):
+    def __init__(self):
+        super().__init__(
+            "A reason is required to deactivate a product.",
+            code="deactivate_reason_required",
         )
 
 
@@ -93,6 +101,7 @@ def create_product(
     internal_code="",
     reorder_level="0",
     reason="",
+    supplier_ids=None,
 ):
     internal_code = _normalize_internal_code(internal_code)
     validate_internal_code_available(internal_code)
@@ -137,64 +146,70 @@ def create_product(
         getattr(user, "email", None),
     )
 
+    if supplier_ids is not None:
+        set_product_suppliers(product, supplier_ids)
+
     return product
 
 
 @transaction.atomic
-def update_product(user, product, reason="", **fields):
-    if not fields:
+def update_product(user, product, reason="", supplier_ids=None, **fields):
+    if not fields and supplier_ids is None:
         return product
 
-    unknown = set(fields) - set(UPDATABLE_FIELDS)
-    if unknown:
-        raise ValueError(f"Cannot update fields: {', '.join(sorted(unknown))}")
+    if fields:
+        unknown = set(fields) - set(UPDATABLE_FIELDS)
+        if unknown:
+            raise ValueError(f"Cannot update fields: {', '.join(sorted(unknown))}")
 
     product = Product.objects.select_for_update().get(pk=product.pk)
 
-    changes = {}
-    pending_internal_code = None
+    if fields:
+        changes = {}
+        pending_internal_code = None
 
-    for field_name, new_value in fields.items():
-        if field_name in ("stock", "price", "reorder_level"):
-            new_value = Decimal(str(new_value))
-        elif field_name == "internal_code":
-            new_value = _normalize_internal_code(new_value)
-            pending_internal_code = new_value
-        elif field_name == "family":
-            new_value = _resolve_family(new_value)
+        for field_name, new_value in fields.items():
+            if field_name in ("stock", "price", "reorder_level"):
+                new_value = Decimal(str(new_value))
+            elif field_name == "internal_code":
+                new_value = _normalize_internal_code(new_value)
+                pending_internal_code = new_value
+            elif field_name == "family":
+                new_value = _resolve_family(new_value)
 
-        old_value = getattr(product, field_name)
-        if old_value != new_value:
-            changes[field_name] = {
-                "old": _serialize_value(old_value),
-                "new": _serialize_value(new_value),
-            }
-            setattr(product, field_name, new_value)
+            old_value = getattr(product, field_name)
+            if old_value != new_value:
+                changes[field_name] = {
+                    "old": _serialize_value(old_value),
+                    "new": _serialize_value(new_value),
+                }
+                setattr(product, field_name, new_value)
 
-    if not changes:
-        return product
+        if changes:
+            if pending_internal_code is not None:
+                validate_internal_code_available(
+                    pending_internal_code,
+                    exclude_product_id=product.pk,
+                )
 
-    if pending_internal_code is not None:
-        validate_internal_code_available(
-            pending_internal_code,
-            exclude_product_id=product.pk,
-        )
+            _save_product(product, update_fields=[*changes.keys(), "updated_at"])
+            _log_change(
+                product,
+                user,
+                ProductChangeLog.Action.UPDATED,
+                changes,
+                reason=reason,
+            )
 
-    _save_product(product, update_fields=[*changes.keys(), "updated_at"])
-    _log_change(
-        product,
-        user,
-        ProductChangeLog.Action.UPDATED,
-        changes,
-        reason=reason,
-    )
+            logger.info(
+                "Updated product id=%s changes=%s user=%s",
+                product.id,
+                list(changes.keys()),
+                getattr(user, "email", None),
+            )
 
-    logger.info(
-        "Updated product id=%s changes=%s user=%s",
-        product.id,
-        list(changes.keys()),
-        getattr(user, "email", None),
-    )
+    if supplier_ids is not None:
+        set_product_suppliers(product, supplier_ids)
 
     return product
 
@@ -204,6 +219,10 @@ def deactivate_product(user, product, reason=""):
     product = Product.objects.select_for_update().get(pk=product.pk)
     if not product.is_active:
         return product
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise DeactivateReasonRequiredError()
 
     product.is_active = False
     _save_product(product, update_fields=["is_active", "updated_at"])
@@ -447,3 +466,34 @@ def unlink_product_supplier(product, supplier):
             product.id,
             supplier.id,
         )
+
+
+@transaction.atomic
+def set_product_suppliers(product, supplier_ids):
+    wanted_ids = {int(supplier_id) for supplier_id in supplier_ids}
+    suppliers = {
+        supplier.id: supplier
+        for supplier in Supplier.objects.filter(pk__in=wanted_ids)
+    }
+    missing = wanted_ids - set(suppliers)
+    if missing:
+        raise ValidationError(
+            f"Unknown supplier ids: {', '.join(str(item) for item in sorted(missing))}"
+        )
+
+    current_ids = set(
+        ProductSupplier.objects.filter(product=product).values_list(
+            "supplier_id",
+            flat=True,
+        )
+    )
+
+    for supplier_id in wanted_ids - current_ids:
+        link_product_supplier(product, suppliers[supplier_id])
+
+    for supplier_id in current_ids - wanted_ids:
+        try:
+            supplier = Supplier.objects.get(pk=supplier_id)
+        except ObjectDoesNotExist:
+            continue
+        unlink_product_supplier(product, supplier)

@@ -83,7 +83,7 @@ class Command(BaseCommand):
                 warehouse_user.save(update_fields=["password", "is_staff"])
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Warehouse staff: {warehouse_user.email} (catalog admin at /admin/products/)"
+                    f"Warehouse staff: {warehouse_user.email} (catalog admin at /manage/products/)"
                 )
             )
 
@@ -223,7 +223,7 @@ class Command(BaseCommand):
             self.stdout.write(f"  {email}  ->  {branch_name}")
         if warehouse_user:
             self.stdout.write("")
-            self.stdout.write("Warehouse product management (/admin/products/product/):")
+            self.stdout.write("Warehouse product management (/manage/products/):")
             self.stdout.write(f"  {warehouse_user.email}")
         self.stdout.write("")
         self.stdout.write(

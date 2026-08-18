@@ -15,6 +15,8 @@ logger = get_logger("centcompras.branches")
 EXEMPT_PATH_PREFIXES = (
     "/accounts/",
     "/admin/",
+    "/manage/",
+    "/api/manage/",
     "/static/",
     "/service-worker.js",
 )

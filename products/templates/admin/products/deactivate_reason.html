@@ -1,0 +1,24 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+<p>A reason is required to deactivate products. They will leave the branch catalogue.</p>
+<form method="post">
+    {% csrf_token %}
+    {% for product in queryset %}
+        <input type="hidden" name="{{ action_checkbox_name }}" value="{{ product.pk }}">
+    {% endfor %}
+    <input type="hidden" name="action" value="deactivate_products">
+    <input type="hidden" name="confirm_deactivate" value="1">
+    <p>
+        <label for="id_reason">Reason</label><br>
+        <input type="text" name="reason" id="id_reason" maxlength="255" required>
+    </p>
+    <ul>
+        {% for product in queryset %}
+            <li>{{ product }}</li>
+        {% endfor %}
+    </ul>
+    <input type="submit" value="Deactivate">
+    <a href="{% url 'admin:products_product_changelist' %}">Cancel</a>
+</form>
+{% endblock %}
