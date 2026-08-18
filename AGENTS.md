@@ -4,7 +4,9 @@ Django 6.1 + PostgreSQL MVP for a **central warehouse** with **satellite branche
 
 **Read [`README.md` → Project status (handoff)](README.md#project-status-handoff) first** for what is done vs pending.
 
-Staff product console (this phase): [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md) — request, stack, decisions, bugs. Follow-ons: [sort + lifecycle](docs/product-console-session-2026-08-18-sort-lifecycle.md), [family + supplier](docs/product-console-session-2026-08-18-family-supplier.md), [family + supplier audit](docs/product-console-session-2026-08-18-family-supplier-audit.md).
+Staff product console: [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md) — request, stack, decisions, bugs. Follow-ons: [sort + lifecycle](docs/product-console-session-2026-08-18-sort-lifecycle.md), [family + supplier](docs/product-console-session-2026-08-18-family-supplier.md), [family + supplier audit](docs/product-console-session-2026-08-18-family-supplier-audit.md).
+
+Procurement (PO → receipt): [`docs/procurement-session-2026-08-18.md`](docs/procurement-session-2026-08-18.md) — inbound stock, stock ledger, Prices drawer, API, roles, bugs fixed.
 
 ## Session handoff (August 2026)
 

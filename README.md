@@ -74,7 +74,7 @@ After `./scripts/seed_dev_data.sh`, all seeded users share password **`devpass12
 
 ### Recommended next session
 
-1. Read this section, [User roles](#user-roles-important--practice-with-these), and the staff console session reports: [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md), [sort + lifecycle](docs/product-console-session-2026-08-18-sort-lifecycle.md), [family + supplier](docs/product-console-session-2026-08-18-family-supplier.md), [family + supplier audit](docs/product-console-session-2026-08-18-family-supplier-audit.md).
+1. Read this section, [User roles](#user-roles-important--practice-with-these), the staff console session reports: [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md), [sort + lifecycle](docs/product-console-session-2026-08-18-sort-lifecycle.md), [family + supplier](docs/product-console-session-2026-08-18-family-supplier.md), [family + supplier audit](docs/product-console-session-2026-08-18-family-supplier-audit.md), and [`docs/procurement-session-2026-08-18.md`](docs/procurement-session-2026-08-18.md) (PO → receipt).
 2. Fresh environment: `python manage.py migrate` then `./scripts/seed_dev_data.sh`.
 3. Practice: warehouse user → `/manage/products/` (Prices drawer for cost/sell/wholesale; stock read-only) and `/manage/procurement/` (draft PO → submit). **Superuser** (`createsuperuser`) → approve PO → receive → stock increases.
 4. **Design branch orders** per tenancy doc. Do not implement the stub `item_name` model.
@@ -410,6 +410,7 @@ Service Worker → caches HTML + JS (app shell, offline page load)
 ## Further reading
 
 - **Start here:** [Project status (handoff)](#project-status-handoff) in this file
+- [`docs/procurement-session-2026-08-18.md`](docs/procurement-session-2026-08-18.md) — PO → approve → receipt; cost/wholesale; stock ledger; staff API; roles; bugs fixed
 - [`docs/product-console-session-2026-08-18.md`](docs/product-console-session-2026-08-18.md) — staff product console: request, stack, decisions, bugs fixed
 - [`docs/product-console-session-2026-08-18-sort-lifecycle.md`](docs/product-console-session-2026-08-18-sort-lifecycle.md) — column sort, inactive create, Genesis / activate / deactivate presets
 - [`docs/product-console-session-2026-08-18-family-supplier.md`](docs/product-console-session-2026-08-18-family-supplier.md) — family and supplier console priors
